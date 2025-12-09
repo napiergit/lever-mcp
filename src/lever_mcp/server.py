@@ -50,29 +50,16 @@ else:
     logger.warning("OAuth not configured - email sending will return payloads only")
     logger.warning("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable OAuth")
 
-# Initialize FastMCP server
-# Don't pass auth_provider here - we want OAuth to be optional per-tool, not required for all requests
-mcp = FastMCP("lever")
+# Initialize FastMCP server with OAuth
+# Pass auth_provider so Toqan can discover OAuth and authenticate users
+mcp = FastMCP("lever", auth=auth_provider)
 
-# Manually add OAuth routes if auth provider is configured
-# This makes OAuth available but not required for all MCP requests
+# Add a custom route for the root protected resource metadata
+# Toqan looks for this at /.well-known/oauth-protected-resource (without /mcp suffix)
 if auth_provider:
     from starlette.responses import JSONResponse
     from starlette.requests import Request
-    from starlette.routing import Route, Mount
-    from starlette.applications import Starlette
     
-    # Get OAuth routes from the auth provider
-    oauth_routes = auth_provider.get_routes(mcp_path=None)
-    
-    # Register each OAuth route as a custom route
-    for route in oauth_routes:
-        if isinstance(route, Route):
-            # Add the route to the MCP server
-            mcp._additional_http_routes.append(route)
-    
-    # Add a custom route for the root protected resource metadata
-    # Toqan looks for this at /.well-known/oauth-protected-resource (without /mcp suffix)
     @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
     async def oauth_protected_resource_root(request: Request):
         """Protected resource metadata at root level for Toqan compatibility."""
@@ -536,7 +523,23 @@ async def _check_oauth_status(user_id: str = "default") -> str:
 mcp.tool(name="list_candidates")(_list_candidates)
 mcp.tool(name="get_candidate")(_get_candidate)
 mcp.tool(name="create_requisition")(_create_requisition)
-mcp.tool(name="send_email")(_send_email)
+
+# Register send_email with OAuth metadata
+if auth_provider:
+    # Add OAuth metadata to the send_email tool
+    mcp.tool(
+        name="send_email",
+        annotations={
+            "oauth": {
+                "required": True,
+                "scopes": GMAIL_SCOPES,
+                "authorization_server": str(auth_provider.base_url)
+            }
+        }
+    )(_send_email)
+else:
+    mcp.tool(name="send_email")(_send_email)
+
 mcp.tool(name="get_oauth_url")(_get_oauth_url)
 mcp.tool(name="exchange_oauth_code")(_exchange_oauth_code)
 mcp.tool(name="check_oauth_status")(_check_oauth_status)
