@@ -22,7 +22,9 @@ class OAuthConfig:
     def __init__(self):
         self.client_id = os.getenv('GOOGLE_CLIENT_ID')
         self.client_secret = os.getenv('GOOGLE_CLIENT_SECRET')
-        self.redirect_uri = os.getenv('OAUTH_REDIRECT_URI', 'http://localhost:8080/oauth/callback')
+        # Construct redirect URI from MCP_SERVER_BASE_URL
+        base_url = os.getenv('MCP_SERVER_BASE_URL', 'https://isolated-coffee-reindeer.fastmcp.app')
+        self.redirect_uri = f"{base_url}/oauth/callback"
         self.token_storage_path = Path(os.getenv('TOKEN_STORAGE_PATH', './.oauth_tokens'))
         
     def is_configured(self) -> bool:
