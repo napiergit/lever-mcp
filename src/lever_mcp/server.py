@@ -59,10 +59,10 @@ else:
     logger.warning("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable OAuth")
 
 # Initialize FastMCP server WITHOUT auth requirement
-# We'll manually add OAuth routes so they're available but don't protect the MCP endpoint
-mcp = FastMCP("lever")
+# Don't pass auth_provider to FastMCP - we'll handle OAuth manually to avoid scope validation
+# The OAuthProxy's built-in endpoints do strict scope validation which breaks with Google
+mcp = FastMCP("lever", auth_provider=None)
 
-# Manually add OAuth routes
 if auth_provider:
     from starlette.responses import JSONResponse, RedirectResponse
     from starlette.requests import Request
@@ -146,31 +146,95 @@ if auth_provider:
                         border-radius: 20px;
                         box-shadow: 0 10px 40px rgba(0,0,0,0.2);
                         text-align: center;
+                        max-width: 500px;
                     }}
                     h1 {{ color: #667eea; margin: 0 0 20px 0; }}
-                    p {{ color: #666; font-size: 16px; }}
+                    p {{ color: #666; font-size: 16px; margin: 10px 0; }}
                     .success {{ font-size: 60px; margin-bottom: 20px; }}
+                    .code-box {{
+                        background: #f5f5f5;
+                        border: 2px solid #e0e0e0;
+                        border-radius: 8px;
+                        padding: 15px;
+                        margin: 20px 0;
+                        word-break: break-all;
+                        font-family: monospace;
+                        font-size: 12px;
+                        color: #333;
+                    }}
+                    .copy-btn {{
+                        background: #667eea;
+                        color: white;
+                        border: none;
+                        padding: 10px 20px;
+                        border-radius: 6px;
+                        cursor: pointer;
+                        font-size: 14px;
+                        margin-top: 10px;
+                    }}
+                    .copy-btn:hover {{
+                        background: #5568d3;
+                    }}
+                    .copy-btn:active {{
+                        background: #4451b8;
+                    }}
+                    .status {{
+                        font-size: 14px;
+                        color: #999;
+                        margin-top: 20px;
+                    }}
                 </style>
             </head>
             <body>
                 <div class="container">
                     <div class="success">✅</div>
                     <h1>Authorization Successful!</h1>
-                    <p>You can close this window now.</p>
-                    <p style="font-size: 14px; color: #999; margin-top: 20px;">
-                        This window will close automatically...
+                    <p id="message">Sending authorization code...</p>
+                    
+                    <div class="code-box" id="codeBox">
+                        <strong>Authorization Code:</strong><br>
+                        {code}
+                    </div>
+                    
+                    <button class="copy-btn" onclick="copyCode()">📋 Copy Code</button>
+                    
+                    <p class="status" id="status">
+                        Checking if opened as popup...
                     </p>
                 </div>
                 <script>
-                    // Send code to parent window if opened as popup
+                    const code = '{code}';
+                    const state = '{state}';
+                    
+                    function copyCode() {{
+                        navigator.clipboard.writeText(code).then(() => {{
+                            const btn = document.querySelector('.copy-btn');
+                            btn.textContent = '✅ Copied!';
+                            setTimeout(() => {{
+                                btn.textContent = '📋 Copy Code';
+                            }}, 2000);
+                        }});
+                    }}
+                    
+                    // Check if opened as popup
                     if (window.opener) {{
+                        document.getElementById('message').textContent = 'Sending code to parent window...';
+                        document.getElementById('status').textContent = 'This window will close automatically in 3 seconds...';
+                        
+                        // Send code to parent window
                         window.opener.postMessage({{
                             type: 'oauth_success',
-                            code: '{code}',
-                            state: '{state}'
+                            code: code,
+                            state: state
                         }}, '*');
-                        // Close popup after a brief delay
-                        setTimeout(() => window.close(), 1500);
+                        
+                        // Close popup after delay
+                        setTimeout(() => {{
+                            window.close();
+                        }}, 3000);
+                    }} else {{
+                        document.getElementById('message').textContent = 'Copy the code above and paste it back in the chat.';
+                        document.getElementById('status').textContent = 'You can close this window after copying the code.';
                     }}
                 </script>
             </body>
@@ -206,13 +270,15 @@ if auth_provider:
         form_data = await request.form()
         code = form_data.get("code")
         
+        logger.info(f"Token exchange requested with code: {code[:20] if code else 'None'}...")
+        
         if not code:
             return JSONResponse({
                 "error": "invalid_request",
                 "error_description": "Missing authorization code"
             }, status_code=400)
         
-        # Exchange code for token with Google
+        # Exchange code for token with Google - no scope validation
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://oauth2.googleapis.com/token",
@@ -226,9 +292,14 @@ if auth_provider:
             )
             
             if response.status_code != 200:
+                logger.error(f"Token exchange failed: {response.status_code} - {response.text}")
                 return JSONResponse(response.json(), status_code=response.status_code)
             
-            return JSONResponse(response.json())
+            token_data = response.json()
+            logger.info(f"Token exchange successful. Scopes returned: {token_data.get('scope', 'none')}")
+            
+            # Return the token data as-is, without any scope validation
+            return JSONResponse(token_data)
     
     # Add authorization server metadata
     @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
@@ -238,7 +309,7 @@ if auth_provider:
             "issuer": str(auth_provider.base_url) + "/",
             "authorization_endpoint": f"{auth_provider.base_url}/authorize",
             "token_endpoint": f"{auth_provider.base_url}/token",
-            "scopes_supported": GMAIL_SCOPES,
+            # Don't advertise specific scopes - accept whatever Google returns
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
             "token_endpoint_auth_methods_supported": ["client_secret_post"],
@@ -252,7 +323,7 @@ if auth_provider:
         return JSONResponse({
             "resource": str(auth_provider.base_url),
             "authorization_servers": [str(auth_provider.base_url)],
-            "scopes_supported": GMAIL_SCOPES,
+            # Don't advertise specific scopes - accept whatever Google returns
             "bearer_methods_supported": ["header"]
         })
 
@@ -567,24 +638,78 @@ async def _send_email(
         "raw": encoded_message
     }
     
-    # Prepare response with instructions
+    # Build OAuth authorization URL for the agent
+    base_url = os.getenv('MCP_SERVER_BASE_URL', 'http://localhost:8000')
+    from urllib.parse import urlencode
+    oauth_params = {
+        "response_type": "code",
+        "scope": " ".join(GMAIL_SCOPES),
+        "state": f"email_to_{user_id}"
+    }
+    oauth_url = f"{base_url}/authorize?{urlencode(oauth_params)}"
+    
+    # Prepare response with automation instructions for Toqan
     response = {
-        "status": "payload_generated",
-        "message": "Email payload generated. Provide access_token parameter to send automatically.",
+        "status": "authorization_required",
+        "message": "OAuth authorization needed to send email. Please authorize Gmail access.",
         "theme": theme,
         "to": to,
         "subject": email_subject,
+        
+        # Toqan automation instructions - tells the agent to open a popup
+        "agent_action": "open_browser_popup",
+        "popup_url": oauth_url,
+        "expected_result": "authorization_code",
+        "automation_available": True,
+        "action": "open_oauth_popup",
+        "popup_instructions": {
+            "url": oauth_url,
+            "capture_callback": True,
+            "auto_extract_code": True,
+            "callback_url_pattern": f"{base_url}/oauth/callback*"
+        },
+        "browser_automation": {
+            "supported": True,
+            "method": "popup_window",
+            "callback_handling": "automatic",
+            "window_features": "width=500,height=600,popup=yes"
+        },
+        
+        # After getting the code, agent should:
+        "next_steps": {
+            "1_exchange_code": {
+                "description": "Exchange authorization code for access token",
+                "endpoint": f"{base_url}/token",
+                "method": "POST",
+                "body": {
+                    "code": "<code_from_callback>",
+                    "grant_type": "authorization_code"
+                }
+            },
+            "2_retry_send": {
+                "description": "Call send_email again with the access_token",
+                "tool": "send_email",
+                "parameters": {
+                    "to": to,
+                    "theme": theme,
+                    "subject": email_subject,
+                    "cc": cc,
+                    "bcc": bcc,
+                    "access_token": "<token_from_step_1>",
+                    "user_id": user_id
+                }
+            }
+        },
+        
+        # Fallback for manual flow
+        "manual_instructions": {
+            "step_1": "User clicks the OAuth URL to authorize",
+            "step_2": "User copies the authorization code from callback",
+            "step_3": "Agent exchanges code for token",
+            "step_4": "Agent retries send_email with access_token"
+        },
+        
         "gmail_api_payload": gmail_payload,
-        "oauth_setup": {
-            "configured": oauth_config.is_configured(),
-            "instructions": "To enable automatic sending, provide access_token parameter or set up OAuth credentials"
-        },
-        "agent_instructions": {
-            "step_1": "Agent should obtain OAuth token from user via Toqan",
-            "step_2": "Call this tool again with access_token parameter",
-            "step_3": "Email will be sent automatically via Gmail API",
-            "alternative": "Or make POST request to: https://gmail.googleapis.com/gmail/v1/users/me/messages/send with the payload"
-        },
         "available_themes": list(email_templates.keys()),
         "email_preview": {
             "subject": email_subject,
