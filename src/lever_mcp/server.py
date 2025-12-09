@@ -19,7 +19,17 @@ if oauth_config.is_configured():
     logger.info("OAuth configured - Setting up OAuth proxy for Gmail integration")
     
     # Get base URL from environment or use default
-    base_url = os.getenv('MCP_SERVER_BASE_URL', 'http://localhost:8080')
+    # For FastMCP Cloud deployment, use the deployed URL
+    base_url = os.getenv('MCP_SERVER_BASE_URL')
+    if not base_url:
+        # Try to detect if we're running on FastMCP Cloud
+        if os.getenv('FASTMCP_CLOUD') or 'fastmcp.app' in os.getenv('HOSTNAME', ''):
+            base_url = 'https://isolated-coffee-reindeer.fastmcp.app'
+            logger.warning(f"MCP_SERVER_BASE_URL not set, using detected FastMCP Cloud URL: {base_url}")
+        else:
+            base_url = 'http://localhost:8080'
+            logger.warning(f"MCP_SERVER_BASE_URL not set, using localhost default: {base_url}")
+    
     logger.info(f"MCP_SERVER_BASE_URL from environment: {os.getenv('MCP_SERVER_BASE_URL')}")
     logger.info(f"Using base_url: {base_url}")
     
