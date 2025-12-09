@@ -51,14 +51,28 @@ else:
     logger.warning("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable OAuth")
 
 # Initialize FastMCP server
-mcp = FastMCP("lever", auth=auth_provider)
+# Don't pass auth_provider here - we want OAuth to be optional per-tool, not required for all requests
+mcp = FastMCP("lever")
 
-# Add a custom route for the root protected resource metadata
-# Toqan looks for this at /.well-known/oauth-protected-resource (without /mcp suffix)
+# Manually add OAuth routes if auth provider is configured
+# This makes OAuth available but not required for all MCP requests
 if auth_provider:
     from starlette.responses import JSONResponse
     from starlette.requests import Request
+    from starlette.routing import Route, Mount
+    from starlette.applications import Starlette
     
+    # Get OAuth routes from the auth provider
+    oauth_routes = auth_provider.get_routes(mcp_path=None)
+    
+    # Register each OAuth route as a custom route
+    for route in oauth_routes:
+        if isinstance(route, Route):
+            # Add the route to the MCP server
+            mcp._additional_http_routes.append(route)
+    
+    # Add a custom route for the root protected resource metadata
+    # Toqan looks for this at /.well-known/oauth-protected-resource (without /mcp suffix)
     @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
     async def oauth_protected_resource_root(request: Request):
         """Protected resource metadata at root level for Toqan compatibility."""
