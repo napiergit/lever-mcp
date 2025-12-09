@@ -53,6 +53,22 @@ else:
 # Initialize FastMCP server
 mcp = FastMCP("lever", auth=auth_provider)
 
+# Add a custom route for the root protected resource metadata
+# Toqan looks for this at /.well-known/oauth-protected-resource (without /mcp suffix)
+if auth_provider:
+    from starlette.responses import JSONResponse
+    from starlette.requests import Request
+    
+    @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
+    async def oauth_protected_resource_root(request: Request):
+        """Protected resource metadata at root level for Toqan compatibility."""
+        return JSONResponse({
+            "resource": str(auth_provider.base_url),
+            "authorization_servers": [str(auth_provider.base_url)],
+            "scopes_supported": GMAIL_SCOPES,
+            "bearer_methods_supported": ["header"]
+        })
+
 async def _list_candidates(limit: int = 10, offset: Optional[str] = None) -> str:
     logger.info(f"Listing candidates with limit={limit}, offset={offset}")
     try:
