@@ -775,13 +775,15 @@ async def _send_email(
 async def _get_oauth_url(user_id: str = "default") -> str:
     """
     Get OAuth authorization URL for Gmail access.
-    User should visit this URL to grant permissions.
+    
+    IMPORTANT: Returns the MCP server's /authorize endpoint, NOT a direct Google URL.
+    This ensures proper scope normalization and OAuth flow handling.
     
     Args:
         user_id: User identifier for token storage
         
     Returns:
-        JSON with authorization URL
+        JSON with authorization URL pointing to our /authorize endpoint
     """
     logger.info(f"Generating OAuth URL for user: {user_id}")
     
@@ -792,20 +794,34 @@ async def _get_oauth_url(user_id: str = "default") -> str:
                 "message": "OAuth not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables."
             }, indent=2)
         
-        gmail_client = GmailClient(user_id=user_id)
-        auth_url = gmail_client.get_auth_url()
+        # Use our /authorize endpoint, NOT direct Google URL
+        # This ensures scope normalization and proper OAuth handling
+        base_url = os.getenv('MCP_SERVER_BASE_URL', 'http://localhost:8000')
+        from urllib.parse import urlencode
+        
+        params = {
+            "response_type": "code",
+            "state": f"user_{user_id}"
+        }
+        
+        # Return our /authorize endpoint which will handle the redirect to Google
+        auth_url = f"{base_url}/authorize?{urlencode(params)}"
+        
+        logger.info(f"Generated OAuth URL using MCP /authorize endpoint: {auth_url}")
         
         response = {
             "status": "success",
             "auth_url": auth_url,
+            "discovery_endpoint": f"{base_url}/.well-known/oauth-authorization-server",
             "instructions": [
                 "1. User should visit the auth_url in their browser",
-                "2. Grant permissions to the application",
-                "3. User will be redirected with an authorization code",
-                "4. Extract the 'code' parameter from the redirect URL",
+                "2. They will be redirected to Google for authorization",
+                "3. After granting permissions, they'll be redirected back with a code",
+                "4. The code will be displayed in the callback page",
                 "5. Call exchange_oauth_code tool with the code"
             ],
-            "user_id": user_id
+            "user_id": user_id,
+            "note": "This URL uses the MCP server's /authorize endpoint for proper scope handling"
         }
         
         return json.dumps(response, indent=2)
