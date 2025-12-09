@@ -20,22 +20,19 @@ if oauth_config.is_configured():
     
     # Get base URL from environment or use default
     base_url = os.getenv('MCP_SERVER_BASE_URL', 'http://localhost:8080')
+    logger.info(f"MCP_SERVER_BASE_URL from environment: {os.getenv('MCP_SERVER_BASE_URL')}")
+    logger.info(f"Using base_url: {base_url}")
     
     # Create OAuth proxy for Google
-    # OAuthProxy validates its own issued tokens, so we pass it to itself as token_verifier
-    # We need to create it in two steps to avoid circular reference
-    auth_provider = OAuthProxy.__new__(OAuthProxy)
-    # Initialize base attributes first
-    auth_provider.base_url = base_url
-    auth_provider.required_scopes = GMAIL_SCOPES
-    # Now initialize the full proxy
-    OAuthProxy.__init__(
-        auth_provider,
+    # Use StaticTokenVerifier temporarily, then replace with self-verification
+    temp_verifier = StaticTokenVerifier(tokens=set())
+    
+    auth_provider = OAuthProxy(
         upstream_authorization_endpoint="https://accounts.google.com/o/oauth2/auth",
         upstream_token_endpoint="https://oauth2.googleapis.com/token",
         upstream_client_id=oauth_config.client_id,
         upstream_client_secret=oauth_config.client_secret,
-        token_verifier=auth_provider,  # Proxy validates its own tokens
+        token_verifier=temp_verifier,
         base_url=base_url,
         redirect_path="/auth/callback",
         valid_scopes=GMAIL_SCOPES,
@@ -45,6 +42,12 @@ if oauth_config.is_configured():
             "prompt": "consent"  # Always show consent screen
         }
     )
+    
+    # Set required scopes after initialization
+    auth_provider.required_scopes = GMAIL_SCOPES
+    
+    # Now set the proxy to verify its own tokens
+    auth_provider._token_verifier = auth_provider
     logger.info(f"OAuth proxy configured with base URL: {base_url}")
 else:
     logger.warning("OAuth not configured - email sending will return payloads only")
