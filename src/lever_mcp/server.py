@@ -1,18 +1,49 @@
 from fastmcp import FastMCP
+from fastmcp.server.auth import OAuthProxy, StaticTokenVerifier
 from lever_mcp.client import LeverClient
 from lever_mcp.gmail_client import GmailClient
-from lever_mcp.oauth_config import oauth_config
+from lever_mcp.oauth_config import oauth_config, GMAIL_SCOPES
 from typing import Optional, Dict, Any
 import logging
 import json
 import base64
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("lever-mcp")
 
+# Initialize FastMCP server with OAuth proxy
+auth_provider = None
+if oauth_config.is_configured():
+    logger.info("OAuth configured - Setting up OAuth proxy for Gmail integration")
+    
+    # Get base URL from environment or use default
+    base_url = os.getenv('MCP_SERVER_BASE_URL', 'http://localhost:8080')
+    
+    # Create OAuth proxy for Google
+    auth_provider = OAuthProxy(
+        upstream_authorization_endpoint="https://accounts.google.com/o/oauth2/auth",
+        upstream_token_endpoint="https://oauth2.googleapis.com/token",
+        upstream_client_id=oauth_config.client_id,
+        upstream_client_secret=oauth_config.client_secret,
+        token_verifier=StaticTokenVerifier(tokens=set()),  # Accept any token from OAuth flow
+        base_url=base_url,
+        redirect_path="/auth/callback",
+        valid_scopes=GMAIL_SCOPES,
+        forward_pkce=True,
+        extra_authorize_params={
+            "access_type": "offline",  # Request refresh token
+            "prompt": "consent"  # Always show consent screen
+        }
+    )
+    logger.info(f"OAuth proxy configured with base URL: {base_url}")
+else:
+    logger.warning("OAuth not configured - email sending will return payloads only")
+    logger.warning("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable OAuth")
+
 # Initialize FastMCP server
-mcp = FastMCP("lever")
+mcp = FastMCP("lever", auth=auth_provider)
 
 async def _list_candidates(limit: int = 10, offset: Optional[str] = None) -> str:
     logger.info(f"Listing candidates with limit={limit}, offset={offset}")
