@@ -22,12 +22,20 @@ if oauth_config.is_configured():
     base_url = os.getenv('MCP_SERVER_BASE_URL', 'http://localhost:8080')
     
     # Create OAuth proxy for Google
-    auth_provider = OAuthProxy(
+    # OAuthProxy validates its own issued tokens, so we pass it to itself as token_verifier
+    # We need to create it in two steps to avoid circular reference
+    auth_provider = OAuthProxy.__new__(OAuthProxy)
+    # Initialize base attributes first
+    auth_provider.base_url = base_url
+    auth_provider.required_scopes = GMAIL_SCOPES
+    # Now initialize the full proxy
+    OAuthProxy.__init__(
+        auth_provider,
         upstream_authorization_endpoint="https://accounts.google.com/o/oauth2/auth",
         upstream_token_endpoint="https://oauth2.googleapis.com/token",
         upstream_client_id=oauth_config.client_id,
         upstream_client_secret=oauth_config.client_secret,
-        token_verifier=StaticTokenVerifier(tokens=set()),  # Accept any token from OAuth flow
+        token_verifier=auth_provider,  # Proxy validates its own tokens
         base_url=base_url,
         redirect_path="/auth/callback",
         valid_scopes=GMAIL_SCOPES,
