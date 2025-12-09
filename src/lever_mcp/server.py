@@ -18,17 +18,9 @@ auth_provider = None
 if oauth_config.is_configured():
     logger.info("OAuth configured - Setting up OAuth proxy for Gmail integration")
     
-    # Get base URL from environment or use default
-    # For FastMCP Cloud deployment, use the deployed URL
-    base_url = os.getenv('MCP_SERVER_BASE_URL')
-    if not base_url:
-        # Try to detect if we're running on FastMCP Cloud
-        if os.getenv('FASTMCP_CLOUD') or 'fastmcp.app' in os.getenv('HOSTNAME', ''):
-            base_url = 'https://isolated-coffee-reindeer.fastmcp.app'
-            logger.warning(f"MCP_SERVER_BASE_URL not set, using detected FastMCP Cloud URL: {base_url}")
-        else:
-            base_url = 'http://localhost:8080'
-            logger.warning(f"MCP_SERVER_BASE_URL not set, using localhost default: {base_url}")
+    # Get base URL from environment or use deployed URL
+    # TEMPORARY: Hardcode the deployed URL until environment variable is properly set
+    base_url = os.getenv('MCP_SERVER_BASE_URL', 'https://isolated-coffee-reindeer.fastmcp.app')
     
     logger.info(f"MCP_SERVER_BASE_URL from environment: {os.getenv('MCP_SERVER_BASE_URL')}")
     logger.info(f"Using base_url: {base_url}")
@@ -44,7 +36,7 @@ if oauth_config.is_configured():
         upstream_client_secret=oauth_config.client_secret,
         token_verifier=temp_verifier,
         base_url=base_url,
-        redirect_path="/auth/callback",
+        redirect_path="/oauth/callback",  # Changed to match what Toqan expects
         valid_scopes=GMAIL_SCOPES,
         forward_pkce=True,
         extra_authorize_params={
@@ -52,6 +44,8 @@ if oauth_config.is_configured():
             "prompt": "consent"  # Always show consent screen
         }
     )
+    
+    logger.info(f"OAuth proxy redirect URI will be: {base_url}/oauth/callback")
     
     # Set required scopes after initialization
     auth_provider.required_scopes = GMAIL_SCOPES
