@@ -267,6 +267,7 @@ if auth_provider:
             "scope": requested_scopes,
             "access_type": "offline",
             "prompt": "consent",
+            "include_granted_scopes": "false",  # Explicitly disable incremental auth
             "state": request.query_params.get("state", "")
         }
         
