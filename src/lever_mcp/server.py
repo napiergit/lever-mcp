@@ -842,12 +842,15 @@ async def _exchange_oauth_code(code: str, user_id: str = "default") -> str:
     """
     Exchange OAuth authorization code for access token.
     
+    IMPORTANT: Returns the access_token that must be used in subsequent send_email calls.
+    This is the on-behalf-of flow - the agent manages the token, not the server.
+    
     Args:
         code: Authorization code from OAuth callback
         user_id: User identifier for token storage
         
     Returns:
-        JSON with token information
+        JSON with access_token and instructions for using it
     """
     logger.info(f"Exchanging OAuth code for user: {user_id}")
     
@@ -855,21 +858,30 @@ async def _exchange_oauth_code(code: str, user_id: str = "default") -> str:
         gmail_client = GmailClient(user_id=user_id)
         token_data = gmail_client.exchange_code_for_token(code)
         
+        access_token = token_data.get('access_token')
+        refresh_token = token_data.get('refresh_token')
+        
+        if not access_token:
+            raise ValueError("No access_token in token response")
+        
         response = {
             "status": "success",
-            "message": "Token obtained and saved successfully",
+            "message": "Token obtained successfully",
             "user_id": user_id,
-            "token_info": {
-                "has_access_token": bool(token_data.get('access_token')),
-                "has_refresh_token": bool(token_data.get('refresh_token')),
-                "expires_in": token_data.get('expires_in')
-            },
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_in": token_data.get('expires_in'),
+            "token_type": token_data.get('token_type', 'Bearer'),
+            "scope": token_data.get('scope'),
             "next_steps": [
-                "Token is now saved and will be used automatically for send_email",
-                "You can now call send_email without providing access_token parameter"
-            ]
+                "IMPORTANT: Use the access_token in your next send_email call",
+                "Example: send_email(to='user@example.com', theme='birthday', access_token='<access_token>')",
+                "The access_token is required for the on-behalf-of flow"
+            ],
+            "note": "Store this access_token - you'll need it for send_email calls"
         }
         
+        logger.info(f"Token exchange successful. Access token provided to agent.")
         return json.dumps(response, indent=2)
         
     except Exception as e:
