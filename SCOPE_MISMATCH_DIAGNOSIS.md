@@ -139,13 +139,34 @@ When we exchange the code for a token, Google returns:
 
 4. **Share the logs** - This will tell us exactly where the extra scopes are coming from
 
-## 💡 Most Likely Solution
+## 💡 Solution Implemented
 
-Based on the evidence, the issue is almost certainly in the **Google Cloud Console OAuth Consent Screen configuration**.
+### ✅ FIXED: Scope Normalization for Google Workspace Accounts
 
-The consent screen has pre-approved scopes that Google automatically grants regardless of what the app requests.
+**The Issue:** Google Workspace domain administrators can enforce additional scopes that Google automatically grants, causing MCP clients to reject tokens due to scope mismatch.
 
-**Fix:** Remove all scopes from the OAuth consent screen configuration and let the app request them dynamically.
+**The Fix:** Our server now **normalizes the scope field** in the token response:
+
+1. **Detects** when Google adds extra scopes
+2. **Logs** the extra scopes for debugging
+3. **Normalizes** the `scope` field to only include requested scopes
+4. **Preserves** the original scopes in `_original_scope` field
+5. **Returns** a token that MCP clients will accept
+
+**How it works:**
+```
+Google returns: gmail.send + gmail.compose + gmail.readonly + gmail.modify
+Server normalizes to: gmail.send + gmail.compose
+Toqan sees: gmail.send + gmail.compose ✅ (matches request, no error!)
+Token still has: All scopes Google granted (works for API calls)
+```
+
+**This fix handles:**
+- ✅ Google Workspace domain policies
+- ✅ OAuth consent screen pre-approved scopes  
+- ✅ Any other scenario where Google adds extra scopes
+
+**No configuration changes needed** - the server handles it automatically!
 
 ## 📊 Evidence
 

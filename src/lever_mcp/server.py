@@ -77,6 +77,13 @@ if auth_provider:
         code = request.query_params.get("code")
         state = request.query_params.get("state")
         error = request.query_params.get("error")
+        callback_scope = request.query_params.get("scope")
+        
+        # Log what Google returned in the callback
+        logger.info(f"OAuth callback received. State: {state}")
+        logger.info(f"Scopes in callback URL: {callback_scope}")
+        if callback_scope:
+            logger.info(f"Callback scope breakdown: {callback_scope.split()}")
         
         if error:
             error_desc = request.query_params.get("error_description", "OAuth authorization failed")
