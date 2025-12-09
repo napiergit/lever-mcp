@@ -36,7 +36,8 @@ if oauth_config.is_configured():
         token_verifier=temp_verifier,
         base_url=base_url,
         redirect_path="/oauth/callback",  # Changed to match what Toqan expects
-        valid_scopes=GMAIL_SCOPES,
+        # Don't set valid_scopes - this causes strict validation
+        # Google may return additional scopes (openid, email, profile) beyond what we request
         forward_pkce=True,
         extra_authorize_params={
             "access_type": "offline",  # Request refresh token
@@ -46,8 +47,9 @@ if oauth_config.is_configured():
     
     logger.info(f"OAuth proxy redirect URI will be: {base_url}/oauth/callback")
     
-    # Set required scopes after initialization
-    auth_provider.required_scopes = GMAIL_SCOPES
+    # Don't set required_scopes - this causes strict matching issues with Google
+    # Google may return scopes in different order or with additional scopes (openid, email, profile)
+    # By not setting valid_scopes or required_scopes, we allow Google to return whatever scopes it wants
     
     # Now set the proxy to verify its own tokens
     auth_provider._token_verifier = auth_provider
