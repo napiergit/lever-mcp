@@ -2,6 +2,13 @@
 
 An MCP server for interacting with the [Lever.co](https://www.lever.co/) API. This server allows AI agents to list candidates, retrieve candidate details, create job requisitions, and send fun themed emails.
 
+## 🚀 Quick Start: Local OAuth Testing
+
+Want to test the OAuth flow locally before deploying? See:
+- **[QUICKSTART_LOCAL.md](QUICKSTART_LOCAL.md)** - 5-minute quick start
+- **[LOCAL_TESTING.md](LOCAL_TESTING.md)** - Comprehensive testing guide
+- **[TESTING_SUMMARY.md](TESTING_SUMMARY.md)** - What was built and why
+
 ## Prerequisites
 
 - Python 3.10 or higher

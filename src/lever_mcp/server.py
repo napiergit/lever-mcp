@@ -19,7 +19,6 @@ if oauth_config.is_configured():
     logger.info("OAuth configured - Setting up OAuth proxy for Gmail integration")
     
     # Get base URL from environment or use deployed URL
-    # TEMPORARY: Hardcode the deployed URL until environment variable is properly set
     base_url = os.getenv('MCP_SERVER_BASE_URL', 'https://isolated-coffee-reindeer.fastmcp.app')
     
     logger.info(f"MCP_SERVER_BASE_URL from environment: {os.getenv('MCP_SERVER_BASE_URL')}")
@@ -57,17 +56,114 @@ else:
     logger.warning("OAuth not configured - email sending will return payloads only")
     logger.warning("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable OAuth")
 
-# Initialize FastMCP server WITH auth provider
-# This registers all OAuth routes including the callback endpoint
-# Toqan can still connect - auth is only enforced when calling tools that need it
-mcp = FastMCP("lever", auth=auth_provider)
+# Initialize FastMCP server WITHOUT auth requirement
+# We'll manually add OAuth routes so they're available but don't protect the MCP endpoint
+mcp = FastMCP("lever")
 
-# Add a custom route for the root protected resource metadata
-# Toqan looks for this at /.well-known/oauth-protected-resource (without /mcp suffix)
+# Manually add OAuth routes
 if auth_provider:
-    from starlette.responses import JSONResponse
+    from starlette.responses import JSONResponse, RedirectResponse
     from starlette.requests import Request
     
+    # Add OAuth callback handler
+    @mcp.custom_route("/oauth/callback", methods=["GET"])
+    async def oauth_callback(request: Request):
+        """Handle OAuth callback from Google."""
+        # Get the authorization code and state from query params
+        code = request.query_params.get("code")
+        state = request.query_params.get("state")
+        error = request.query_params.get("error")
+        
+        if error:
+            return JSONResponse({
+                "error": error,
+                "error_description": request.query_params.get("error_description", "OAuth authorization failed")
+            }, status_code=400)
+        
+        if not code:
+            return JSONResponse({
+                "error": "missing_code",
+                "error_description": "Authorization code not provided"
+            }, status_code=400)
+        
+        # Return success page with the code
+        # Toqan will handle the token exchange
+        return JSONResponse({
+            "status": "success",
+            "message": "Authorization successful! You can close this window.",
+            "code": code,
+            "state": state
+        })
+    
+    # Add OAuth authorization endpoint
+    @mcp.custom_route("/authorize", methods=["GET"])
+    async def oauth_authorize(request: Request):
+        """Redirect to Google OAuth authorization."""
+        # Build Google OAuth URL
+        from urllib.parse import urlencode
+        
+        params = {
+            "client_id": oauth_config.client_id,
+            "redirect_uri": oauth_config.redirect_uri,
+            "response_type": "code",
+            "scope": " ".join(GMAIL_SCOPES),
+            "access_type": "offline",
+            "prompt": "consent",
+            "state": request.query_params.get("state", "")
+        }
+        
+        auth_url = f"https://accounts.google.com/o/oauth2/auth?{urlencode(params)}"
+        return RedirectResponse(url=auth_url)
+    
+    # Add token endpoint
+    @mcp.custom_route("/token", methods=["POST"])
+    async def oauth_token(request: Request):
+        """Exchange authorization code for access token."""
+        import httpx
+        
+        form_data = await request.form()
+        code = form_data.get("code")
+        
+        if not code:
+            return JSONResponse({
+                "error": "invalid_request",
+                "error_description": "Missing authorization code"
+            }, status_code=400)
+        
+        # Exchange code for token with Google
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code": code,
+                    "client_id": oauth_config.client_id,
+                    "client_secret": oauth_config.client_secret,
+                    "redirect_uri": oauth_config.redirect_uri,
+                    "grant_type": "authorization_code"
+                }
+            )
+            
+            if response.status_code != 200:
+                return JSONResponse(response.json(), status_code=response.status_code)
+            
+            return JSONResponse(response.json())
+    
+    # Add authorization server metadata
+    @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
+    async def oauth_authorization_server_metadata(request: Request):
+        """OAuth authorization server metadata."""
+        return JSONResponse({
+            "issuer": str(auth_provider.base_url) + "/",
+            "authorization_endpoint": f"{auth_provider.base_url}/authorize",
+            "token_endpoint": f"{auth_provider.base_url}/token",
+            "scopes_supported": GMAIL_SCOPES,
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "token_endpoint_auth_methods_supported": ["client_secret_post"],
+            "code_challenge_methods_supported": ["S256"]
+        })
+    
+    # Add protected resource metadata
     @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
     async def oauth_protected_resource_root(request: Request):
         """Protected resource metadata at root level for Toqan compatibility."""
@@ -77,6 +173,16 @@ if auth_provider:
             "scopes_supported": GMAIL_SCOPES,
             "bearer_methods_supported": ["header"]
         })
+
+# Add health check endpoint
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(request: Request):
+    """Health check endpoint."""
+    return JSONResponse({
+        "status": "healthy",
+        "oauth_configured": oauth_config.is_configured(),
+        "base_url": os.getenv('MCP_SERVER_BASE_URL', 'not set')
+    })
 
 async def _list_candidates(limit: int = 10, offset: Optional[str] = None) -> str:
     logger.info(f"Listing candidates with limit={limit}, offset={offset}")
