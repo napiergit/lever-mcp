@@ -61,7 +61,7 @@ else:
 # Initialize FastMCP server WITHOUT auth requirement
 # Don't pass auth_provider to FastMCP - we'll handle OAuth manually to avoid scope validation
 # The OAuthProxy's built-in endpoints do strict scope validation which breaks with Google
-mcp = FastMCP("lever", auth_provider=None)
+mcp = FastMCP("lever")
 
 if auth_provider:
     from starlette.responses import JSONResponse, RedirectResponse
@@ -394,6 +394,15 @@ async def _send_email(
     """
     Generate and send a themed email via Gmail API with OAuth 2.0.
     
+    AGENT INSTRUCTIONS:
+    1. If you have OAuth capability (can open browser popups), try calling this tool first without access_token
+    2. The response will include automation instructions (agent_action: "open_browser_popup")
+    3. Follow the popup_instructions to get the authorization code automatically
+    4. Use the exchange_oauth_code tool to get the access_token
+    5. Call this tool again with the access_token parameter
+    
+    ALTERNATIVE: If you don't have OAuth capability, use the get_oauth_url tool to get a URL for the user.
+    
     Args:
         to: Recipient email address
         theme: Email theme (birthday, pirate, space, medieval, superhero, tropical)
@@ -404,7 +413,7 @@ async def _send_email(
         user_id: User identifier for token storage
         
     Returns:
-        JSON response with email status and details
+        JSON response with email status and details, or automation instructions if OAuth needed
     """
     logger.info(f"Generating themed email: to={to}, theme={theme}, has_token={bool(access_token)}")
     
