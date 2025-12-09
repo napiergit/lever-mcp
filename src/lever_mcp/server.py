@@ -248,17 +248,23 @@ if auth_provider:
         # Build Google OAuth URL
         from urllib.parse import urlencode
         
+        # Log what scopes we're requesting
+        requested_scopes = " ".join(GMAIL_SCOPES)
+        logger.info(f"Authorization requested. Scopes: {requested_scopes}")
+        logger.info(f"State: {request.query_params.get('state', 'none')}")
+        
         params = {
             "client_id": oauth_config.client_id,
             "redirect_uri": oauth_config.redirect_uri,
             "response_type": "code",
-            "scope": " ".join(GMAIL_SCOPES),
+            "scope": requested_scopes,
             "access_type": "offline",
             "prompt": "consent",
             "state": request.query_params.get("state", "")
         }
         
         auth_url = f"https://accounts.google.com/o/oauth2/auth?{urlencode(params)}"
+        logger.info(f"Redirecting to Google: {auth_url[:100]}...")
         return RedirectResponse(url=auth_url)
     
     # Add token endpoint
@@ -335,6 +341,19 @@ async def health_check(request: Request):
         "status": "healthy",
         "oauth_configured": oauth_config.is_configured(),
         "base_url": os.getenv('MCP_SERVER_BASE_URL', 'not set')
+    })
+
+# Add OAuth diagnostic endpoint
+@mcp.custom_route("/oauth/debug", methods=["GET"])
+async def oauth_debug(request: Request):
+    """Debug endpoint to show OAuth configuration."""
+    return JSONResponse({
+        "oauth_configured": oauth_config.is_configured(),
+        "scopes_we_request": GMAIL_SCOPES,
+        "authorization_endpoint": f"{os.getenv('MCP_SERVER_BASE_URL', 'http://localhost:8000')}/authorize",
+        "token_endpoint": f"{os.getenv('MCP_SERVER_BASE_URL', 'http://localhost:8000')}/token",
+        "redirect_uri": oauth_config.redirect_uri,
+        "note": "Google should return ONLY the scopes we request. If you see extra scopes, check your Google Cloud Console OAuth consent screen settings."
     })
 
 async def _list_candidates(limit: int = 10, offset: Optional[str] = None) -> str:
