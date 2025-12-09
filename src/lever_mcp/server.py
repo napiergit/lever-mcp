@@ -13,6 +13,150 @@ import os
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("lever-mcp")
 
+# Shared email templates for all email tools
+EMAIL_TEMPLATES = {
+    "birthday": {
+        "subject": "🎉 Happy Birthday! Let's Celebrate! 🎂",
+        "body": """
+<html>
+<body style="font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px;">
+    <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 20px; padding: 40px; box-shadow: 0 10px 40px rgba(0,0,0,0.2);">
+        <h1 style="color: #667eea; text-align: center; font-size: 48px; margin-bottom: 20px;">🎉 Happy Birthday! 🎉</h1>
+        <p style="font-size: 18px; color: #333; line-height: 1.6;">
+            Wishing you a day filled with happiness, laughter, and all your favorite things! 
+            May this year bring you endless joy and amazing adventures! 🎂🎈
+        </p>
+        <div style="text-align: center; margin: 30px 0;">
+            <div style="font-size: 60px;">🎁 🎊 🎈 🎂 🎉</div>
+        </div>
+        <p style="font-size: 16px; color: #666; text-align: center;">
+            Have an absolutely wonderful day!
+        </p>
+    </div>
+</body>
+</html>
+"""
+    },
+    "pirate": {
+        "subject": "⚓ Ahoy Matey! A Message from the Seven Seas! 🏴‍☠️",
+        "body": """
+<html>
+<body style="font-family: 'Courier New', monospace; background: #1a1a2e; padding: 40px;">
+    <div style="max-width: 600px; margin: 0 auto; background: #16213e; border: 3px solid #e94560; border-radius: 15px; padding: 40px; box-shadow: 0 10px 40px rgba(233, 69, 96, 0.3);">
+        <h1 style="color: #e94560; text-align: center; font-size: 42px; margin-bottom: 20px;">⚓ Ahoy Matey! ⚓</h1>
+        <p style="font-size: 18px; color: #f1f1f1; line-height: 1.6;">
+            Arrr! This be a message from the high seas! 🏴‍☠️
+        </p>
+        <p style="font-size: 16px; color: #ddd; line-height: 1.6; font-style: italic;">
+            May yer sails be full and yer treasure chest overflow with doubloons! 
+            Keep a weather eye on the horizon, and may the winds be ever in yer favor!
+        </p>
+        <div style="text-align: center; margin: 30px 0; font-size: 50px;">
+            🏴‍☠️ ⚓ 🗺️ 💰 ⚔️
+        </div>
+        <p style="font-size: 14px; color: #999; text-align: center;">
+            Fair winds and following seas!<br>
+            - Captain of the Digital Seas
+        </p>
+    </div>
+</body>
+</html>
+"""
+    },
+    "space": {
+        "subject": "🚀 Greetings from the Cosmos! ✨",
+        "body": """
+<html>
+<body style="font-family: 'Arial', sans-serif; background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%); padding: 40px;">
+    <div style="max-width: 600px; margin: 0 auto; background: rgba(255,255,255,0.05); border: 2px solid #4facfe; border-radius: 20px; padding: 40px; box-shadow: 0 0 40px rgba(79, 172, 254, 0.3);">
+        <h1 style="color: #4facfe; text-align: center; font-size: 42px; margin-bottom: 20px; text-shadow: 0 0 20px rgba(79, 172, 254, 0.5);">🚀 Cosmic Greetings! 🌟</h1>
+        <p style="font-size: 18px; color: #e0e0e0; line-height: 1.6;">
+            Transmitting message from the outer reaches of the galaxy! 
+            May your journey through the cosmos be filled with wonder and discovery! 🌌
+        </p>
+        <div style="text-align: center; margin: 30px 0; font-size: 50px;">
+            🌍 🛸 ⭐ 🌙 🪐
+        </div>
+        <p style="font-size: 14px; color: #999; text-align: center;">
+            To infinity and beyond!<br>
+            - Your Intergalactic Friend
+        </p>
+    </div>
+</body>
+</html>
+"""
+    },
+    "medieval": {
+        "subject": "⚔️ A Royal Decree from the Kingdom! 👑",
+        "body": """
+<html>
+<body style="font-family: 'Georgia', serif; background: linear-gradient(135deg, #2c1810 0%, #4a2c1a 100%); padding: 40px;">
+    <div style="max-width: 600px; margin: 0 auto; background: #f4e4c1; border: 5px solid #8b6914; border-radius: 10px; padding: 40px; box-shadow: 0 10px 40px rgba(0,0,0,0.5);">
+        <h1 style="color: #8b6914; text-align: center; font-size: 42px; margin-bottom: 20px; font-family: 'Georgia', serif;">⚔️ Royal Decree ⚔️</h1>
+        <p style="font-size: 18px; color: #2c1810; line-height: 1.6; font-style: italic;">
+            Hear ye, hear ye! By order of the realm, we extend our warmest greetings! 
+            May your days be filled with honor, valor, and prosperity! 👑
+        </p>
+        <div style="text-align: center; margin: 30px 0; font-size: 50px;">
+            🏰 ⚔️ 🛡️ 👑 🐉
+        </div>
+        <p style="font-size: 14px; color: #666; text-align: center;">
+            Long live the kingdom!<br>
+            - The Royal Court
+        </p>
+    </div>
+</body>
+</html>
+"""
+    },
+    "superhero": {
+        "subject": "💥 Superhero Alert! You're Amazing! 🦸",
+        "body": """
+<html>
+<body style="font-family: 'Impact', 'Arial Black', sans-serif; background: linear-gradient(135deg, #ff0844 0%, #ffb199 100%); padding: 40px;">
+    <div style="max-width: 600px; margin: 0 auto; background: #fff; border: 5px solid #ff0844; border-radius: 15px; padding: 40px; box-shadow: 0 10px 40px rgba(255, 8, 68, 0.3);">
+        <h1 style="color: #ff0844; text-align: center; font-size: 48px; margin-bottom: 20px; text-transform: uppercase;">💥 POW! 💥</h1>
+        <p style="font-size: 18px; color: #333; line-height: 1.6; font-weight: bold;">
+            Calling all heroes! You have the power to make today AMAZING! 
+            Keep being the superhero you are! 🦸‍♀️🦸‍♂️
+        </p>
+        <div style="text-align: center; margin: 30px 0; font-size: 50px;">
+            ⚡ 💪 🦸 🌟 💥
+        </div>
+        <p style="font-size: 14px; color: #666; text-align: center;">
+            With great power comes great awesomeness!<br>
+            - Your Superhero Squad
+        </p>
+    </div>
+</body>
+</html>
+"""
+    },
+    "tropical": {
+        "subject": "🌴 Aloha! Tropical Vibes Coming Your Way! 🌺",
+        "body": """
+<html>
+<body style="font-family: 'Arial', sans-serif; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 40px;">
+    <div style="max-width: 600px; margin: 0 auto; background: #fff; border-radius: 25px; padding: 40px; box-shadow: 0 10px 40px rgba(245, 87, 108, 0.3);">
+        <h1 style="color: #f5576c; text-align: center; font-size: 48px; margin-bottom: 20px;">🌴 Aloha! 🌺</h1>
+        <p style="font-size: 18px; color: #333; line-height: 1.6;">
+            Sending you tropical vibes and sunny smiles! 
+            May your day be as bright and beautiful as a beach sunset! 🌅
+        </p>
+        <div style="text-align: center; margin: 30px 0; font-size: 50px;">
+            🌴 🌺 🥥 🏖️ 🌊
+        </div>
+        <p style="font-size: 14px; color: #666; text-align: center;">
+            Stay breezy!<br>
+            - Your Island Friends
+        </p>
+    </div>
+</body>
+</html>
+"""
+    }
+}
+
 # Initialize FastMCP server with OAuth proxy
 auth_provider = None
 if oauth_config.is_configured():
@@ -461,161 +605,8 @@ async def _send_email(
     """
     logger.info(f"Generating themed email: to={to}, theme={theme}, has_token={bool(access_token)}")
     
-    # Email templates based on themes
-    email_templates = {
-        "birthday": {
-            "subject": "🎉 Happy Birthday! Let's Celebrate! 🎂",
-            "body": """
-<html>
-<body style="font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px;">
-    <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 20px; padding: 40px; box-shadow: 0 10px 40px rgba(0,0,0,0.2);">
-        <h1 style="color: #667eea; text-align: center; font-size: 48px; margin-bottom: 20px;">🎉 Happy Birthday! 🎉</h1>
-        <p style="font-size: 18px; color: #333; line-height: 1.6;">
-            Wishing you a day filled with happiness, laughter, and all your favorite things! 
-            May this year bring you endless joy and amazing adventures! 🎂🎈
-        </p>
-        <div style="text-align: center; margin: 30px 0;">
-            <div style="font-size: 60px;">🎁 🎊 🎈 🎂 🎉</div>
-        </div>
-        <p style="font-size: 16px; color: #666; text-align: center;">
-            Have an absolutely wonderful day!
-        </p>
-    </div>
-</body>
-</html>
-"""
-        },
-        "pirate": {
-            "subject": "⚓ Ahoy Matey! A Message from the Seven Seas! 🏴‍☠️",
-            "body": """
-<html>
-<body style="font-family: 'Courier New', monospace; background: #1a1a2e; padding: 40px;">
-    <div style="max-width: 600px; margin: 0 auto; background: #16213e; border: 3px solid #e94560; border-radius: 15px; padding: 40px; box-shadow: 0 10px 40px rgba(233, 69, 96, 0.3);">
-        <h1 style="color: #e94560; text-align: center; font-size: 42px; margin-bottom: 20px;">⚓ Ahoy Matey! ⚓</h1>
-        <p style="font-size: 18px; color: #f1f1f1; line-height: 1.6;">
-            Arrr! This be a message from the high seas! 🏴‍☠️
-        </p>
-        <p style="font-size: 16px; color: #ddd; line-height: 1.6; font-style: italic;">
-            May yer sails be full and yer treasure chest overflow with doubloons! 
-            Keep a weather eye on the horizon, and may the winds be ever in yer favor!
-        </p>
-        <div style="text-align: center; margin: 30px 0; font-size: 50px;">
-            🏴‍☠️ ⚓ 🗺️ 💰 ⚔️
-        </div>
-        <p style="font-size: 14px; color: #999; text-align: center;">
-            Fair winds and following seas!<br>
-            - Captain of the Digital Seas
-        </p>
-    </div>
-</body>
-</html>
-"""
-        },
-        "space": {
-            "subject": "🚀 Greetings from the Cosmos! 🌌",
-            "body": """
-<html>
-<body style="font-family: 'Arial', sans-serif; background: #000; padding: 40px;">
-    <div style="max-width: 600px; margin: 0 auto; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 50%, #7e22ce 100%); border-radius: 20px; padding: 40px; box-shadow: 0 0 40px rgba(126, 34, 206, 0.5);">
-        <h1 style="color: #fff; text-align: center; font-size: 42px; margin-bottom: 20px; text-shadow: 0 0 20px rgba(255,255,255,0.5);">🚀 Cosmic Greetings! 🌌</h1>
-        <p style="font-size: 18px; color: #e0e0e0; line-height: 1.6;">
-            Greetings, space explorer! 👨‍🚀
-        </p>
-        <p style="font-size: 16px; color: #d0d0d0; line-height: 1.6;">
-            Your mission, should you choose to accept it, is to have an absolutely stellar day! 
-            May your journey through the cosmos be filled with wonder and discovery!
-        </p>
-        <div style="text-align: center; margin: 30px 0; font-size: 50px;">
-            🌟 🪐 🛸 🌙 ✨
-        </div>
-        <p style="font-size: 14px; color: #aaa; text-align: center;">
-            Transmission complete.<br>
-            - Mission Control
-        </p>
-    </div>
-</body>
-</html>
-"""
-        },
-        "medieval": {
-            "subject": "⚔️ A Royal Proclamation! 🏰",
-            "body": """
-<html>
-<body style="font-family: 'Georgia', serif; background: #2c1810; padding: 40px;">
-    <div style="max-width: 600px; margin: 0 auto; background: #f4e4c1; border: 5px solid #8b4513; border-radius: 10px; padding: 40px; box-shadow: 0 10px 40px rgba(0,0,0,0.5);">
-        <h1 style="color: #8b4513; text-align: center; font-size: 42px; margin-bottom: 20px; font-family: 'Georgia', serif;">⚔️ Royal Proclamation ⚔️</h1>
-        <p style="font-size: 18px; color: #2c1810; line-height: 1.8; text-align: justify;">
-            Hear ye, hear ye! By order of the realm, this message is delivered unto thee! 🏰
-        </p>
-        <p style="font-size: 16px; color: #3c2810; line-height: 1.8; text-align: justify; font-style: italic;">
-            May thy days be filled with honor, thy quests be successful, and thy feasts be bountiful! 
-            Long may thou prosper in this noble kingdom!
-        </p>
-        <div style="text-align: center; margin: 30px 0; font-size: 50px;">
-            👑 ⚔️ 🏰 🛡️ 🐉
-        </div>
-        <p style="font-size: 14px; color: #5c4810; text-align: center;">
-            By royal decree,<br>
-            The Court Scribe
-        </p>
-    </div>
-</body>
-</html>
-"""
-        },
-        "superhero": {
-            "subject": "💥 URGENT: Superhero Alert! 🦸",
-            "body": """
-<html>
-<body style="font-family: 'Impact', 'Arial Black', sans-serif; background: #ff0000; padding: 40px;">
-    <div style="max-width: 600px; margin: 0 auto; background: #ffeb3b; border: 8px solid #000; border-radius: 15px; padding: 40px; box-shadow: 0 10px 40px rgba(0,0,0,0.7);">
-        <h1 style="color: #ff0000; text-align: center; font-size: 48px; margin-bottom: 20px; text-shadow: 3px 3px 0 #000; letter-spacing: 2px;">💥 SUPERHERO ALERT! 💥</h1>
-        <p style="font-size: 20px; color: #000; line-height: 1.6; font-weight: bold;">
-            ATTENTION HERO! 🦸
-        </p>
-        <p style="font-size: 16px; color: #333; line-height: 1.6;">
-            Your incredible powers are needed! The city calls upon you to have an AMAZING day and 
-            save the world with your awesome abilities! Remember: with great power comes great responsibility!
-        </p>
-        <div style="text-align: center; margin: 30px 0; font-size: 50px;">
-            💪 ⚡ 🦸 🌟 💥
-        </div>
-        <p style="font-size: 14px; color: #666; text-align: center; font-weight: bold;">
-            MISSION STATUS: ACTIVE<br>
-            - Hero Command Center
-        </p>
-    </div>
-</body>
-</html>
-"""
-        },
-        "tropical": {
-            "subject": "🌴 Aloha! Tropical Vibes Coming Your Way! 🌺",
-            "body": """
-<html>
-<body style="font-family: 'Comic Sans MS', 'Arial', sans-serif; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 40px;">
-    <div style="max-width: 600px; margin: 0 auto; background: #fff; border-radius: 25px; padding: 40px; box-shadow: 0 10px 40px rgba(0,0,0,0.2);">
-        <h1 style="color: #f5576c; text-align: center; font-size: 42px; margin-bottom: 20px;">🌴 Aloha! 🌺</h1>
-        <p style="font-size: 18px; color: #333; line-height: 1.6;">
-            Sending you tropical vibes and sunny wishes! 🏝️
-        </p>
-        <p style="font-size: 16px; color: #555; line-height: 1.6;">
-            May your day be as refreshing as a cool ocean breeze and as bright as the tropical sun! 
-            Time to relax, unwind, and enjoy the paradise around you!
-        </p>
-        <div style="text-align: center; margin: 30px 0; font-size: 50px;">
-            🌺 🥥 🍹 🏖️ 🌊
-        </div>
-        <p style="font-size: 14px; color: #999; text-align: center;">
-            Mahalo!<br>
-            - Your Island Friend
-        </p>
-    </div>
-</body>
-</html>
-"""
-        }
-    }
+    # Use shared email templates
+    email_templates = EMAIL_TEMPLATES
     
     # Get the template or default to birthday
     template = email_templates.get(theme.lower(), email_templates["birthday"])
@@ -925,6 +916,92 @@ async def _check_oauth_status(user_id: str = "default") -> str:
         }, indent=2)
 
 
+async def _generate_email_content(
+    to: str,
+    theme: str,
+    subject: Optional[str] = None,
+    cc: Optional[str] = None,
+    bcc: Optional[str] = None
+) -> str:
+    """
+    Generate themed email content WITHOUT sending it.
+    
+    ⚡ AGENT INSTRUCTIONS - READ CAREFULLY - WHEN TO USE THIS TOOL:
+    
+    ✅ USE THIS TOOL ONLY IF:
+    - You have an ALREADY AUTHENTICATED email client (Gmail, Outlook, etc.)
+    - You are CURRENTLY SIGNED IN to an email service
+    - You have native email sending capability
+    - You want beautiful themed emails without going through OAuth
+    
+    ❌ DO NOT USE THIS TOOL IF:
+    - You are NOT already authenticated to an email service
+    - You don't have email sending capability
+    - The user needs to authenticate first
+    
+    👉 IF NOT AUTHENTICATED: Use the 'send_email' tool instead
+       - send_email will guide you through Gmail OAuth authentication
+       - send_email handles the complete flow including sending
+    
+    AFTER CALLING THIS TOOL (only if you're already authenticated):
+    1. You will receive the email content (subject, body, recipients)
+    2. YOU MUST send the email using your own authenticated email tool
+    3. Use the HTML body provided - it's beautifully themed!
+    4. Confirm to the user that the email was sent
+    
+    This tool does NOT require OAuth - it just generates content for agents with existing email access.
+    
+    Args:
+        to: Recipient email address
+        theme: Email theme (birthday, pirate, space, medieval, superhero, tropical)
+        subject: Optional custom subject (uses theme default if not provided)
+        cc: Optional CC recipients
+        bcc: Optional BCC recipients
+        
+    Returns:
+        JSON with email content ready to send via your email tool
+    """
+    logger.info(f"Generating email content: to={to}, theme={theme}")
+    
+    # Use shared email templates
+    email_templates = EMAIL_TEMPLATES
+    
+    # Get the template or default to birthday
+    template = email_templates.get(theme.lower(), email_templates["birthday"])
+    
+    # Use provided subject or template subject
+    email_subject = subject if subject else template["subject"]
+    email_body = template["body"]
+    
+    response = {
+        "status": "content_generated",
+        "message": "Email content generated successfully. YOU MUST NOW SEND THIS EMAIL using your email tool.",
+        "theme": theme,
+        "email_data": {
+            "to": to,
+            "subject": email_subject,
+            "body": email_body,
+            "body_type": "html",
+            "cc": cc,
+            "bcc": bcc
+        },
+        "agent_instructions": {
+            "critical": "YOU MUST SEND THIS EMAIL NOW",
+            "steps": [
+                "1. Take the email_data from this response",
+                "2. Use your own email sending tool/capability",
+                "3. Send the email with the HTML body provided",
+                "4. Confirm to the user that the email was sent"
+            ],
+            "example": "Use your Gmail/Outlook/email tool with the subject and body provided above"
+        },
+        "note": "This tool only generates content. You are responsible for actually sending the email."
+    }
+    
+    logger.info(f"Email content generated for theme: {theme}")
+    return json.dumps(response, indent=2)
+
+
 # Register tools
 mcp.tool(name="list_candidates")(_list_candidates)
 mcp.tool(name="get_candidate")(_get_candidate)
@@ -945,6 +1022,9 @@ if auth_provider:
     )(_send_email)
 else:
     mcp.tool(name="send_email")(_send_email)
+
+# Register generate_email_content - NO OAuth required (just generates content)
+mcp.tool(name="generate_email_content")(_generate_email_content)
 
 mcp.tool(name="get_oauth_url")(_get_oauth_url)
 mcp.tool(name="exchange_oauth_code")(_exchange_oauth_code)
