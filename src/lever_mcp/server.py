@@ -1,5 +1,7 @@
 from fastmcp import FastMCP
 from lever_mcp.client import LeverClient
+from lever_mcp.gmail_client import GmailClient
+from lever_mcp.oauth_config import oauth_config
 from typing import Optional, Dict, Any
 import logging
 import json
@@ -57,12 +59,31 @@ async def _create_requisition(title: str, location: str, team: str) -> str:
         logger.error(f"Error creating requisition: {e}")
         return f"Error creating requisition: {str(e)}"
 
-async def _send_email(to: str, theme: str, subject: Optional[str] = None, cc: Optional[str] = None, bcc: Optional[str] = None) -> str:
+async def _send_email(
+    to: str, 
+    theme: str, 
+    subject: Optional[str] = None, 
+    cc: Optional[str] = None, 
+    bcc: Optional[str] = None,
+    access_token: Optional[str] = None,
+    user_id: str = "default"
+) -> str:
     """
-    Generate a cool email and return the Gmail API payload.
-    No authentication required - returns the payload that can be used with a valid OAuth token.
+    Generate and send a themed email via Gmail API with OAuth 2.0.
+    
+    Args:
+        to: Recipient email address
+        theme: Email theme (birthday, pirate, space, medieval, superhero, tropical)
+        subject: Optional custom subject (uses theme default if not provided)
+        cc: Optional CC recipients
+        bcc: Optional BCC recipients
+        access_token: OAuth access token from agent (on-behalf-of flow)
+        user_id: User identifier for token storage
+        
+    Returns:
+        JSON response with email status and details
     """
-    logger.info(f"Generating themed email: to={to}, theme={theme}")
+    logger.info(f"Generating themed email: to={to}, theme={theme}, has_token={bool(access_token)}")
     
     # Email templates based on themes
     email_templates = {
@@ -227,6 +248,47 @@ async def _send_email(to: str, theme: str, subject: Optional[str] = None, cc: Op
     email_subject = subject if subject else template["subject"]
     email_body = template["body"]
     
+    # Try to send email if we have OAuth token
+    if access_token or oauth_config.is_configured():
+        try:
+            gmail_client = GmailClient(access_token=access_token, user_id=user_id)
+            
+            if gmail_client.is_authenticated():
+                # Send the email
+                result = await gmail_client.send_email(
+                    to=to,
+                    subject=email_subject,
+                    body=email_body,
+                    cc=cc,
+                    bcc=bcc,
+                    is_html=True
+                )
+                
+                response = {
+                    "status": "sent",
+                    "message": "Email sent successfully via Gmail API",
+                    "message_id": result["message_id"],
+                    "theme": theme,
+                    "to": to,
+                    "subject": email_subject,
+                    "cc": cc,
+                    "bcc": bcc
+                }
+                
+                logger.info(f"Email sent successfully: {result['message_id']}")
+                return json.dumps(response, indent=2)
+            else:
+                logger.warning("Gmail client not authenticated, falling back to payload generation")
+        except Exception as e:
+            logger.error(f"Error sending email via Gmail API: {e}")
+            # Fall through to payload generation
+            response_error = {
+                "status": "error",
+                "message": f"Failed to send email: {str(e)}",
+                "fallback": "Generating payload for manual sending"
+            }
+    
+    # Fallback: Generate payload for manual sending or agent to use
     # Create the email message in RFC 2822 format
     message_parts = [
         f"To: {to}",
@@ -255,18 +317,21 @@ async def _send_email(to: str, theme: str, subject: Optional[str] = None, cc: Op
     
     # Prepare response with instructions
     response = {
-        "status": "success",
+        "status": "payload_generated",
+        "message": "Email payload generated. Provide access_token parameter to send automatically.",
         "theme": theme,
         "to": to,
         "subject": email_subject,
         "gmail_api_payload": gmail_payload,
-        "instructions": {
-            "step_1": "If you have Gmail OAuth credentials, use the Gmail API to send this email",
-            "step_2": "Make a POST request to: https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-            "step_3": "Include your OAuth token in the Authorization header: 'Bearer YOUR_ACCESS_TOKEN'",
-            "step_4": "Send the 'gmail_api_payload' as the request body",
-            "step_5": "If you don't have credentials, inform the user that the email template has been generated and they need to provide OAuth credentials",
-            "alternative": "You can also copy the email body and send it manually through your email client"
+        "oauth_setup": {
+            "configured": oauth_config.is_configured(),
+            "instructions": "To enable automatic sending, provide access_token parameter or set up OAuth credentials"
+        },
+        "agent_instructions": {
+            "step_1": "Agent should obtain OAuth token from user via Toqan",
+            "step_2": "Call this tool again with access_token parameter",
+            "step_3": "Email will be sent automatically via Gmail API",
+            "alternative": "Or make POST request to: https://gmail.googleapis.com/gmail/v1/users/me/messages/send with the payload"
         },
         "available_themes": list(email_templates.keys()),
         "email_preview": {
@@ -277,11 +342,135 @@ async def _send_email(to: str, theme: str, subject: Optional[str] = None, cc: Op
     
     return json.dumps(response, indent=2)
 
+async def _get_oauth_url(user_id: str = "default") -> str:
+    """
+    Get OAuth authorization URL for Gmail access.
+    User should visit this URL to grant permissions.
+    
+    Args:
+        user_id: User identifier for token storage
+        
+    Returns:
+        JSON with authorization URL
+    """
+    logger.info(f"Generating OAuth URL for user: {user_id}")
+    
+    try:
+        if not oauth_config.is_configured():
+            return json.dumps({
+                "status": "error",
+                "message": "OAuth not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables."
+            }, indent=2)
+        
+        gmail_client = GmailClient(user_id=user_id)
+        auth_url = gmail_client.get_auth_url()
+        
+        response = {
+            "status": "success",
+            "auth_url": auth_url,
+            "instructions": [
+                "1. User should visit the auth_url in their browser",
+                "2. Grant permissions to the application",
+                "3. User will be redirected with an authorization code",
+                "4. Extract the 'code' parameter from the redirect URL",
+                "5. Call exchange_oauth_code tool with the code"
+            ],
+            "user_id": user_id
+        }
+        
+        return json.dumps(response, indent=2)
+        
+    except Exception as e:
+        logger.error(f"Error generating OAuth URL: {e}")
+        return json.dumps({
+            "status": "error",
+            "message": str(e)
+        }, indent=2)
+
+
+async def _exchange_oauth_code(code: str, user_id: str = "default") -> str:
+    """
+    Exchange OAuth authorization code for access token.
+    
+    Args:
+        code: Authorization code from OAuth callback
+        user_id: User identifier for token storage
+        
+    Returns:
+        JSON with token information
+    """
+    logger.info(f"Exchanging OAuth code for user: {user_id}")
+    
+    try:
+        gmail_client = GmailClient(user_id=user_id)
+        token_data = gmail_client.exchange_code_for_token(code)
+        
+        response = {
+            "status": "success",
+            "message": "Token obtained and saved successfully",
+            "user_id": user_id,
+            "token_info": {
+                "has_access_token": bool(token_data.get('access_token')),
+                "has_refresh_token": bool(token_data.get('refresh_token')),
+                "expires_in": token_data.get('expires_in')
+            },
+            "next_steps": [
+                "Token is now saved and will be used automatically for send_email",
+                "You can now call send_email without providing access_token parameter"
+            ]
+        }
+        
+        return json.dumps(response, indent=2)
+        
+    except Exception as e:
+        logger.error(f"Error exchanging OAuth code: {e}")
+        return json.dumps({
+            "status": "error",
+            "message": str(e)
+        }, indent=2)
+
+
+async def _check_oauth_status(user_id: str = "default") -> str:
+    """
+    Check OAuth authentication status.
+    
+    Args:
+        user_id: User identifier
+        
+    Returns:
+        JSON with authentication status
+    """
+    logger.info(f"Checking OAuth status for user: {user_id}")
+    
+    try:
+        gmail_client = GmailClient(user_id=user_id)
+        
+        response = {
+            "status": "success",
+            "user_id": user_id,
+            "oauth_configured": oauth_config.is_configured(),
+            "authenticated": gmail_client.is_authenticated(),
+            "message": "Ready to send emails" if gmail_client.is_authenticated() else "Not authenticated. Use get_oauth_url to start authentication."
+        }
+        
+        return json.dumps(response, indent=2)
+        
+    except Exception as e:
+        logger.error(f"Error checking OAuth status: {e}")
+        return json.dumps({
+            "status": "error",
+            "message": str(e)
+        }, indent=2)
+
+
 # Register tools
 mcp.tool(name="list_candidates")(_list_candidates)
 mcp.tool(name="get_candidate")(_get_candidate)
 mcp.tool(name="create_requisition")(_create_requisition)
 mcp.tool(name="send_email")(_send_email)
+mcp.tool(name="get_oauth_url")(_get_oauth_url)
+mcp.tool(name="exchange_oauth_code")(_exchange_oauth_code)
+mcp.tool(name="check_oauth_status")(_check_oauth_status)
 
 if __name__ == "__main__":
     mcp.run()

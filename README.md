@@ -24,8 +24,18 @@ An MCP server for interacting with the [Lever.co](https://www.lever.co/) API. Th
 
 The server requires the following environment variables:
 
+### Lever API Configuration
 - `LEVER_API_KEY`: Your Lever API key.
 - `LEVER_API_BASE_URL` (Optional): The base URL for the API. Defaults to `https://api.lever.co/v1`.
+
+### Gmail OAuth Configuration (Optional)
+For email sending functionality:
+- `GOOGLE_CLIENT_ID`: Your Google OAuth client ID
+- `GOOGLE_CLIENT_SECRET`: Your Google OAuth client secret
+- `OAUTH_REDIRECT_URI` (Optional): OAuth redirect URI. Defaults to `http://localhost:8080/oauth/callback`
+- `TOKEN_STORAGE_PATH` (Optional): Path to store OAuth tokens. Defaults to `./.oauth_tokens`
+
+See [OAUTH_SETUP.md](./OAUTH_SETUP.md) for detailed Gmail OAuth setup instructions.
 
 ### Sandbox Environment
 
@@ -166,10 +176,10 @@ Creates a new job requisition in Lever.
 Create a requisition for Senior Software Engineer in San Francisco for the Engineering team
 ```
 
-### Email Tool
+### Email Tools
 
 #### `send_email`
-Generates a fun themed email and returns a Gmail API payload ready to send.
+Generates and sends a themed email via Gmail API with OAuth 2.0 authentication.
 
 **Parameters:**
 - `to` (required): Recipient email address
@@ -177,11 +187,12 @@ Generates a fun themed email and returns a Gmail API payload ready to send.
 - `subject` (optional): Custom subject line (uses theme default if not provided)
 - `cc` (optional): CC email addresses (comma-separated)
 - `bcc` (optional): BCC email addresses (comma-separated)
+- `access_token` (optional): OAuth access token from agent (on-behalf-of flow)
+- `user_id` (optional): User identifier for token storage (default: "default")
 
 **Returns:**
-- Gmail API payload (base64-encoded email ready to send)
-- Step-by-step instructions for sending via Gmail API
-- Email preview with subject and theme information
+- If authenticated: Email sent status with message ID
+- If not authenticated: Gmail API payload for manual sending
 
 **Available Themes:**
 - 🎉 **birthday**: Colorful birthday celebration email
@@ -196,11 +207,53 @@ Generates a fun themed email and returns a Gmail API payload ready to send.
 Send a birthday themed email to friend@example.com
 ```
 
-**How it works:**
-1. The tool generates a beautiful HTML email based on your chosen theme
-2. Returns a Gmail API payload that can be used with OAuth credentials
-3. If the AI agent has Gmail OAuth access, it can send the email directly
-4. Otherwise, provides instructions for manual sending or integration
+**OAuth Integration:**
+- **With Token**: Provide `access_token` parameter to send email immediately
+- **Without Token**: Returns Gmail API payload for manual sending
+- See [OAUTH_SETUP.md](./OAUTH_SETUP.md) for setup instructions
 
-**Note:** This tool does not require Lever API credentials and can be used independently.
+#### `get_oauth_url`
+Get OAuth authorization URL for Gmail access.
+
+**Parameters:**
+- `user_id` (optional): User identifier (default: "default")
+
+**Returns:**
+- Authorization URL and step-by-step instructions
+
+**Example:**
+```
+Get Gmail OAuth authorization URL
+```
+
+#### `exchange_oauth_code`
+Exchange OAuth authorization code for access token.
+
+**Parameters:**
+- `code` (required): Authorization code from OAuth callback
+- `user_id` (optional): User identifier (default: "default")
+
+**Returns:**
+- Token information and confirmation
+
+**Example:**
+```
+Exchange OAuth code abc123xyz for access token
+```
+
+#### `check_oauth_status`
+Check OAuth authentication status.
+
+**Parameters:**
+- `user_id` (optional): User identifier (default: "default")
+
+**Returns:**
+- Authentication status and configuration info
+
+**Example:**
+```
+Check Gmail OAuth status
+```
+
+**Note:** Email tools do not require Lever API credentials and can be used independently.
 
