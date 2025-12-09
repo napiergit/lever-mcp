@@ -50,16 +50,29 @@ else:
     logger.warning("OAuth not configured - email sending will return payloads only")
     logger.warning("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable OAuth")
 
-# Initialize FastMCP server with OAuth
-# Pass auth_provider so Toqan can discover OAuth and authenticate users
-mcp = FastMCP("lever", auth=auth_provider)
+# Initialize FastMCP server WITHOUT auth requirement
+# OAuth is available via endpoints but not required for MCP connection
+# This allows Toqan to connect without OAuth during setup
+# Users will authenticate per-session when they try to use email tools
+mcp = FastMCP("lever")
 
-# Add a custom route for the root protected resource metadata
-# Toqan looks for this at /.well-known/oauth-protected-resource (without /mcp suffix)
+# Manually expose OAuth routes so they're discoverable
+# This allows Toqan to discover OAuth without requiring auth for MCP connection
 if auth_provider:
     from starlette.responses import JSONResponse
     from starlette.requests import Request
+    from starlette.routing import Route
     
+    # Get OAuth routes from the auth provider
+    oauth_routes = auth_provider.get_routes(mcp_path=None)
+    
+    # Register each OAuth route
+    for route in oauth_routes:
+        if isinstance(route, Route):
+            mcp._additional_http_routes.append(route)
+    
+    # Add a custom route for the root protected resource metadata
+    # Toqan looks for this at /.well-known/oauth-protected-resource (without /mcp suffix)
     @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
     async def oauth_protected_resource_root(request: Request):
         """Protected resource metadata at root level for Toqan compatibility."""
