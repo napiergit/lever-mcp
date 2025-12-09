@@ -71,31 +71,111 @@ if auth_provider:
     @mcp.custom_route("/oauth/callback", methods=["GET"])
     async def oauth_callback(request: Request):
         """Handle OAuth callback from Google."""
+        from starlette.responses import HTMLResponse
+        
         # Get the authorization code and state from query params
         code = request.query_params.get("code")
         state = request.query_params.get("state")
         error = request.query_params.get("error")
         
         if error:
-            return JSONResponse({
-                "error": error,
-                "error_description": request.query_params.get("error_description", "OAuth authorization failed")
-            }, status_code=400)
+            error_desc = request.query_params.get("error_description", "OAuth authorization failed")
+            # Return HTML page that closes popup and sends error to parent
+            return HTMLResponse(f"""
+                <html>
+                <head><title>Authorization Failed</title></head>
+                <body>
+                    <h1>❌ Authorization Failed</h1>
+                    <p>{error}: {error_desc}</p>
+                    <p>You can close this window.</p>
+                    <script>
+                        // Send error to parent window if opened as popup
+                        if (window.opener) {{
+                            window.opener.postMessage({{
+                                type: 'oauth_error',
+                                error: '{error}',
+                                error_description: '{error_desc}'
+                            }}, '*');
+                            window.close();
+                        }}
+                    </script>
+                </body>
+                </html>
+            """, status_code=400)
         
         if not code:
-            return JSONResponse({
-                "error": "missing_code",
-                "error_description": "Authorization code not provided"
-            }, status_code=400)
+            return HTMLResponse("""
+                <html>
+                <head><title>Authorization Failed</title></head>
+                <body>
+                    <h1>❌ Authorization Failed</h1>
+                    <p>No authorization code received.</p>
+                    <p>You can close this window.</p>
+                    <script>
+                        if (window.opener) {
+                            window.opener.postMessage({
+                                type: 'oauth_error',
+                                error: 'missing_code',
+                                error_description: 'No authorization code received'
+                            }, '*');
+                            window.close();
+                        }
+                    </script>
+                </body>
+                </html>
+            """, status_code=400)
         
-        # Return success page with the code
-        # Toqan will handle the token exchange
-        return JSONResponse({
-            "status": "success",
-            "message": "Authorization successful! You can close this window.",
-            "code": code,
-            "state": state
-        })
+        # Return success page that closes popup and sends code to parent
+        return HTMLResponse(f"""
+            <html>
+            <head>
+                <title>Authorization Successful</title>
+                <style>
+                    body {{
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        height: 100vh;
+                        margin: 0;
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    }}
+                    .container {{
+                        background: white;
+                        padding: 40px;
+                        border-radius: 20px;
+                        box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+                        text-align: center;
+                    }}
+                    h1 {{ color: #667eea; margin: 0 0 20px 0; }}
+                    p {{ color: #666; font-size: 16px; }}
+                    .success {{ font-size: 60px; margin-bottom: 20px; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="success">✅</div>
+                    <h1>Authorization Successful!</h1>
+                    <p>You can close this window now.</p>
+                    <p style="font-size: 14px; color: #999; margin-top: 20px;">
+                        This window will close automatically...
+                    </p>
+                </div>
+                <script>
+                    // Send code to parent window if opened as popup
+                    if (window.opener) {{
+                        window.opener.postMessage({{
+                            type: 'oauth_success',
+                            code: '{code}',
+                            state: '{state}'
+                        }}, '*');
+                        // Close popup after a brief delay
+                        setTimeout(() => window.close(), 1500);
+                    }}
+                </script>
+            </body>
+            </html>
+        """)
     
     # Add OAuth authorization endpoint
     @mcp.custom_route("/authorize", methods=["GET"])
