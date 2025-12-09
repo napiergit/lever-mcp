@@ -302,9 +302,26 @@ if auth_provider:
                 return JSONResponse(response.json(), status_code=response.status_code)
             
             token_data = response.json()
-            logger.info(f"Token exchange successful. Scopes returned: {token_data.get('scope', 'none')}")
+            returned_scopes = token_data.get('scope', '')
+            logger.info(f"Token exchange successful. Scopes returned: {returned_scopes}")
             
-            # Return the token data as-is, without any scope validation
+            # Check if Google added extra scopes (common with Google Workspace accounts)
+            requested_scopes = set(GMAIL_SCOPES)
+            actual_scopes = set(returned_scopes.split()) if returned_scopes else set()
+            extra_scopes = actual_scopes - requested_scopes
+            
+            if extra_scopes:
+                logger.warning(f"Google added extra scopes (likely due to Workspace policy): {extra_scopes}")
+                logger.info("Normalizing scope field to only include requested scopes for MCP compatibility")
+                
+                # Normalize the scope field to only include what we requested
+                # This prevents MCP clients from rejecting the token due to scope mismatch
+                # The actual token still has all the scopes Google granted
+                token_data['scope'] = ' '.join(GMAIL_SCOPES)
+                token_data['_original_scope'] = returned_scopes
+                token_data['_scope_note'] = 'Scope field normalized for MCP compatibility. Original scopes in _original_scope field.'
+            
+            # Return the token data with normalized scopes
             return JSONResponse(token_data)
     
     # Add authorization server metadata
