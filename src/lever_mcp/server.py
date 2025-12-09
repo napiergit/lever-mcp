@@ -624,9 +624,11 @@ async def _send_email(
     email_subject = subject if subject else template["subject"]
     email_body = template["body"]
     
-    # Try to send email if we have OAuth token
-    if access_token or oauth_config.is_configured():
+    # Try to send email ONLY if we have an access_token (on-behalf-of flow)
+    # Do NOT try to load tokens from disk - production has read-only filesystem
+    if access_token:
         try:
+            logger.info("Using provided access_token (on-behalf-of flow)")
             gmail_client = GmailClient(access_token=access_token, user_id=user_id)
             
             if gmail_client.is_authenticated():
@@ -654,15 +656,17 @@ async def _send_email(
                 logger.info(f"Email sent successfully: {result['message_id']}")
                 return json.dumps(response, indent=2)
             else:
-                logger.warning("Gmail client not authenticated, falling back to payload generation")
+                logger.error("Gmail client not authenticated despite having access_token")
         except Exception as e:
             logger.error(f"Error sending email via Gmail API: {e}")
-            # Fall through to payload generation
+            # Fall through to OAuth instructions
             response_error = {
                 "status": "error",
                 "message": f"Failed to send email: {str(e)}",
-                "fallback": "Generating payload for manual sending"
+                "fallback": "Returning OAuth instructions"
             }
+    else:
+        logger.info("No access_token provided - returning OAuth instructions for agent")
     
     # Fallback: Generate payload for manual sending or agent to use
     # Create the email message in RFC 2822 format
