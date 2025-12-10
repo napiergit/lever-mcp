@@ -986,10 +986,34 @@ async def _generate_email_content(
     email_subject = subject if subject else template["subject"]
     email_body = template["body"]
     
+    # Create RFC 2822 formatted message for Gmail API
+    message_parts = [
+        f"To: {to}",
+        f"Subject: {email_subject}",
+        "MIME-Version: 1.0",
+        "Content-Type: text/html; charset=utf-8",
+    ]
+    
+    if cc:
+        message_parts.append(f"Cc: {cc}")
+    if bcc:
+        message_parts.append(f"Bcc: {bcc}")
+    
+    message_parts.append("")  # Empty line between headers and body
+    message_parts.append(email_body)
+    
+    raw_message = "\n".join(message_parts)
+    
+    # Encode the message in base64url format as required by Gmail API
+    encoded_message = base64.urlsafe_b64encode(raw_message.encode('utf-8')).decode('utf-8')
+    
     response = {
         "status": "content_generated",
-        "message": "Email content generated successfully. YOU MUST NOW SEND THIS EMAIL using your Gmail integration.",
+        "message": "Email content generated successfully. USE THE gmail_payload BELOW to send via Gmail API.",
         "theme": theme,
+        "gmail_payload": {
+            "raw": encoded_message
+        },
         "email_data": {
             "to": to,
             "subject": email_subject,
@@ -998,35 +1022,31 @@ async def _generate_email_content(
             "bcc": bcc
         },
         "gmail_api_instructions": {
-            "critical": "SEND AS HTML EMAIL VIA GMAIL API",
-            "method": "Use Gmail API with raw RFC 2822 format",
-            "content_type": "text/html; charset=utf-8",
-            "mime_version": "1.0",
+            "critical": "USE THE gmail_payload FIELD ABOVE - IT'S READY TO SEND",
+            "method": "POST to Gmail API messages.send endpoint",
+            "endpoint": "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+            "payload": "Use the 'gmail_payload' field from this response",
             "steps": [
-                "1. Create RFC 2822 message with Content-Type: text/html; charset=utf-8",
-                "2. Include MIME-Version: 1.0 header",
-                "3. Base64url encode the complete message",
-                "4. Send via Gmail API messages.send endpoint",
+                "1. Take the 'gmail_payload' object from this response",
+                "2. POST it to Gmail API: POST /gmail/v1/users/me/messages/send",
+                "3. The payload is already base64url encoded with proper HTML headers",
+                "4. The email will render as HTML in Gmail",
                 "5. Confirm to the user that the HTML email was sent"
             ],
-            "example_headers": {
-                "To": to,
-                "Subject": email_subject,
-                "MIME-Version": "1.0",
-                "Content-Type": "text/html; charset=utf-8"
-            }
+            "example_curl": f"curl -X POST https://gmail.googleapis.com/gmail/v1/users/me/messages/send -H 'Authorization: Bearer YOUR_TOKEN' -d '{{\"raw\": \"{encoded_message[:50]}...\"}}'",
+            "note": "The gmail_payload.raw field contains the complete RFC 2822 message with HTML headers already set"
         },
         "agent_instructions": {
-            "critical": "YOU MUST SEND THIS AS HTML EMAIL",
-            "format": "HTML (not plain text)",
+            "critical": "SEND THE gmail_payload - IT'S ALREADY FORMATTED FOR HTML",
+            "format": "Use gmail_payload.raw field - already base64url encoded",
             "steps": [
-                "1. Use the html_body field (not as plain text)",
-                "2. Send via Gmail API with Content-Type: text/html",
-                "3. Ensure HTML rendering is enabled",
-                "4. Verify the email renders properly in Gmail"
+                "1. Use gmail_payload.raw (NOT email_data.html_body directly)",
+                "2. POST to Gmail API messages.send endpoint",
+                "3. The message is already formatted with Content-Type: text/html",
+                "4. Email will render as HTML automatically"
             ]
         },
-        "note": "This is HTML content. MUST be sent as HTML email via Gmail API, not as plain text."
+        "note": "The gmail_payload is ready to send. It contains the HTML email properly formatted with MIME headers."
     }
     
     logger.info(f"Email content generated for theme: {theme}")
