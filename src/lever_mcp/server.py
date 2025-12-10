@@ -4,6 +4,8 @@ from lever_mcp.client import LeverClient
 from lever_mcp.gmail_client import GmailClient
 from lever_mcp.oauth_config import oauth_config, GMAIL_SCOPES
 from typing import Optional, Dict, Any
+from starlette.responses import JSONResponse, RedirectResponse, HTMLResponse
+from starlette.requests import Request
 import logging
 import json
 import base64
@@ -208,15 +210,10 @@ else:
 mcp = FastMCP("lever")
 
 if auth_provider:
-    from starlette.responses import JSONResponse, RedirectResponse
-    from starlette.requests import Request
-    
     # Add OAuth callback handler
     @mcp.custom_route("/oauth/callback", methods=["GET"])
     async def oauth_callback(request: Request):
         """Handle OAuth callback from Google."""
-        from starlette.responses import HTMLResponse
-        
         # Get the authorization code and state from query params
         code = request.query_params.get("code")
         state = request.query_params.get("state")
@@ -480,10 +477,11 @@ if auth_provider:
     @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
     async def oauth_authorization_server_metadata(request: Request):
         """OAuth authorization server metadata."""
+        base = str(auth_provider.base_url).rstrip('/')
         return JSONResponse({
-            "issuer": str(auth_provider.base_url) + "/",
-            "authorization_endpoint": f"{auth_provider.base_url}/authorize",
-            "token_endpoint": f"{auth_provider.base_url}/token",
+            "issuer": base + "/",
+            "authorization_endpoint": f"{base}/authorize",
+            "token_endpoint": f"{base}/token",
             # Don't advertise specific scopes - accept whatever Google returns
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
@@ -495,9 +493,10 @@ if auth_provider:
     @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
     async def oauth_protected_resource_root(request: Request):
         """Protected resource metadata at root level for Toqan compatibility."""
+        base = str(auth_provider.base_url).rstrip('/')
         return JSONResponse({
-            "resource": str(auth_provider.base_url),
-            "authorization_servers": [str(auth_provider.base_url)],
+            "resource": base,
+            "authorization_servers": [base],
             # Don't advertise specific scopes - accept whatever Google returns
             "bearer_methods_supported": ["header"]
         })
@@ -529,8 +528,6 @@ async def oauth_debug(request: Request):
 @mcp.custom_route("/preview/email/{theme}", methods=["GET"])
 async def preview_email(request: Request):
     """Preview email HTML for a given theme."""
-    from starlette.responses import HTMLResponse
-    
     theme = request.path_params.get("theme", "birthday")
     to = request.query_params.get("to", "recipient@example.com")
     
