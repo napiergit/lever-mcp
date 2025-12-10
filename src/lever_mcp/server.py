@@ -381,10 +381,27 @@ if auth_provider:
                             window.close();
                         }} catch (e) {{
                             // If window.close() fails (some browsers restrict it), 
-                            // at least update the message to tell user they can close manually
-                            document.getElementById('status').textContent = 'You can now close this tab manually.';
+                            // provide developer feedback and user instruction
+                            console.log('Auto-close failed:', e);
+                            document.getElementById('status').textContent = 'Auto-close failed - You can close this tab manually.';
+                            
+                            // Add developer debug info
+                            const debugDiv = document.createElement('div');
+                            debugDiv.style.cssText = 'margin-top: 15px; padding: 10px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; font-size: 12px; color: #856404;';
+                            debugDiv.innerHTML = '<strong>Debug Info:</strong> Auto-close timeout fired after 5 seconds. window.close() was blocked by browser security policy.';
+                            document.querySelector('.container').appendChild(debugDiv);
                         }}
                     }}, 5000);
+                    
+                    // Additional developer feedback after 6 seconds if still open
+                    setTimeout(() => {{
+                        if (!window.closed) {{
+                            console.log('Window still open after 6 seconds - auto-close definitely failed');
+                            const existingStatus = document.getElementById('status');
+                            existingStatus.textContent = 'Window remains open - auto-close was blocked. Please close manually.';
+                            existingStatus.style.color = '#dc3545';
+                        }}
+                    }}, 6000);
                 </script>
             </body>
             </html>
@@ -662,11 +679,24 @@ async def _send_email(
     """
     Generate and send a themed email via Gmail API with OAuth 2.0.
     
-    ⚡ AGENT INSTRUCTIONS - WHEN TO USE THIS TOOL:
+    🚨 CRITICAL AGENT INSTRUCTIONS - READ CAREFULLY:
+    
+    ⚠️ BEFORE POLLING - USER MUST CLICK LINK:
+    1. You MUST display the OAuth link prominently to the user as a clickable button/link
+    2. You MUST wait for the user to actually click the link before starting to poll
+    3. DO NOT hide the link in reasoning - show it in your response to the user
+    4. DO NOT start polling until user confirms they clicked the authorization link
+    5. If you poll without user clicking, you're polling for nothing and will timeout
+    
+    🔄 POLLING REQUIREMENTS:
+    1. Use poll_oauth_code tool with exponential backoff (1s, 2s, 4s, 8s intervals)
+    2. Add randomization to each poll call to avoid 'identical tool calls' error
+    3. Example: poll_oauth_code(session_id='abc', attempt=1) then poll_oauth_code(session_id='abc', attempt=2)
+    4. Show countdown timer and cancel button during polling
+    5. Poll for maximum 60 seconds
     
     ❌ DO NOT USE THIS TOOL IF:
     - You already have an active Google Gmail connection/authentication
-    - The user has NOT specifically asked to use this OAuth flow
     - You are NOT testing OAuth functionality
     
     ✅ USE THIS TOOL ONLY IF:
@@ -677,12 +707,6 @@ async def _send_email(
     👉 IF YOU HAVE GMAIL ACCESS: Use 'generate_email_content' instead
        - It generates themed emails for agents with existing Gmail access
        - No OAuth needed
-    
-    OAUTH FLOW (if using this tool):
-    1. Call this tool without access_token
-    2. Follow the popup_instructions to get authorization code
-    3. Use exchange_oauth_code tool to get access_token
-    4. Call this tool again with the access_token parameter
     
     Args:
         to: Recipient email address
@@ -815,11 +839,14 @@ async def _send_email(
         # CRITICAL INSTRUCTIONS FOR AGENT
         "AGENT_MUST_DO": {
             "DISPLAY_AS_BUTTON": f"Display the OAuth URL as a nice button, not just a link: {oauth_url}",
-            "WAIT_FOR_USER_CLICK": "Wait for user to actually click the authorize button before starting polling",
+            "WAIT_FOR_USER_CLICK": "CRITICAL: Wait for user to actually click the authorize button before starting polling",
+            "DO_NOT_HIDE_LINK": "DO NOT hide the OAuth link in reasoning - show it prominently in your response",
+            "CONFIRM_USER_CLICKED": "Ask user to confirm they clicked the link before you start polling",
             "SHOW_CANCEL_OPTION": "Present a cancel button alongside the authorize button",
             "POLL_WITH_BACKOFF": "Poll for 60 seconds with exponential backoff (1s, 2s, 4s, 8s, then 8s intervals)",
+            "RANDOMIZE_POLLS": "Add different parameters to each poll call (attempt number, timestamp) to avoid identical calls error",
             "SHOW_CANCEL_POLLING": "During polling, show a 'Cancel Authorization' button",
-            "DO_NOT_AUTO_START": "Do NOT start polling automatically - wait for user to click authorize button first"
+            "DO_NOT_AUTO_START": "NEVER start polling automatically - wait for user to click and confirm first"
         },
         
         "browser_agent_instructions": {
@@ -875,12 +902,17 @@ async def _send_email(
                 "parameters": {"session_id": session_id},
                 "exponential_backoff": [1, 2, 4, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8],
                 "max_duration_seconds": 60,
+                "randomization": {
+                    "add_random_string": "To avoid identical tool calls, add a random string to each poll call",
+                    "example": "Add timestamp or counter: poll_oauth_code(session_id='abc', attempt=1, timestamp='...')",
+                    "purpose": "Prevents 'too many identical tool calls' error"
+                },
                 "user_feedback": {
                     "show_timer": True,
                     "show_cancel_button": True,
                     "cancel_button_text": "Cancel Authorization"
                 },
-                "CRITICAL": "Use exponential backoff delays, show countdown and cancel option"
+                "CRITICAL": "Use exponential backoff delays, show countdown, cancel option, and randomize each call"
             },
             "3_exchange_token": {
                 "description": "Exchange code for access token",
@@ -920,18 +952,19 @@ async def _send_email(
         
         # Clear user-facing message and UI instructions for the agent
         "USER_INTERFACE_INSTRUCTIONS": {
-            "initial_message": "To send this email, I need to authorize Gmail access. Please click the button below:",
+            "initial_message": "To send this email, I need to authorize Gmail access. Please click the button below and confirm when done:",
             "authorize_button": {
                 "text": "🔗 Authorize Gmail Access",
                 "url": oauth_url,
                 "style": "primary",
-                "description": "Opens in new tab"
+                "description": "Opens in new tab - CLICK THIS FIRST"
             },
             "cancel_button": {
                 "text": "❌ Cancel",
                 "action": "cancel_email",
                 "style": "secondary"
             },
+            "user_confirmation_required": "After clicking the link above and completing authorization, please let me know so I can start checking for completion.",
             "waiting_message": "Waiting for you to complete authorization in the new tab...",
             "polling_message": "Authorization in progress... ({{countdown}} seconds remaining)",
             "cancel_polling_button": {
@@ -1157,17 +1190,22 @@ async def _get_browser_agent_oauth_url(user_id: str = "default") -> str:
         }, indent=2)
 
 
-async def _poll_oauth_code(session_id: str) -> str:
+async def _poll_oauth_code(session_id: str, attempt: Optional[int] = None, timestamp: Optional[str] = None, random_id: Optional[str] = None) -> str:
     """
     Poll for OAuth authorization code by session ID (browser agents).
     
     Args:
         session_id: OAuth session ID from get_browser_agent_oauth_url
+        attempt: Optional attempt number to avoid identical tool calls (recommended)
+        timestamp: Optional timestamp to avoid identical tool calls
+        random_id: Optional random string to avoid identical tool calls
         
     Returns:
         JSON with authorization code if ready, or status if still pending
+        
+    Note: Include attempt, timestamp, or random_id to prevent 'too many identical tool calls' error
     """
-    logger.info(f"Polling OAuth code for session: {session_id}")
+    logger.info(f"Polling OAuth code for session: {session_id} (attempt: {attempt}, timestamp: {timestamp}, random: {random_id})")
     
     try:
         if not session_id:
@@ -1207,7 +1245,9 @@ async def _poll_oauth_code(session_id: str) -> str:
             "code": code,
             "message": "Authorization code retrieved successfully",
             "next_step": "Call exchange_oauth_code with this code",
-            "session_id": session_id
+            "session_id": session_id,
+            "attempt": attempt,
+            "polling_info": "Code successfully retrieved and session cleaned up"
         }, indent=2)
         
     except Exception as e:
