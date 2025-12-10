@@ -525,6 +525,21 @@ async def oauth_debug(request: Request):
         "note": "Google should return ONLY the scopes we request. If you see extra scopes, check your Google Cloud Console OAuth consent screen settings."
     })
 
+# Add email preview endpoint
+@mcp.custom_route("/preview/email/{theme}", methods=["GET"])
+async def preview_email(request: Request):
+    """Preview email HTML for a given theme."""
+    from starlette.responses import HTMLResponse
+    
+    theme = request.path_params.get("theme", "birthday")
+    to = request.query_params.get("to", "recipient@example.com")
+    
+    # Get the template or default to birthday
+    template = EMAIL_TEMPLATES.get(theme.lower(), EMAIL_TEMPLATES["birthday"])
+    
+    # Return the HTML with proper content type
+    return HTMLResponse(template["body"])
+
 async def _list_candidates(limit: int = 10, offset: Optional[str] = None) -> str:
     logger.info(f"Listing candidates with limit={limit}, offset={offset}")
     try:
@@ -708,6 +723,7 @@ async def _send_email(
         "state": f"email_to_{user_id}"
     }
     oauth_url = f"{base_url}/authorize?{urlencode(oauth_params)}"
+    preview_url = f"{base_url}/preview/email/{theme.lower()}?to={to}"
     
     # Prepare response with automation instructions for Toqan
     response = {
@@ -716,6 +732,8 @@ async def _send_email(
         "theme": theme,
         "to": to,
         "subject": email_subject,
+        "preview_url": preview_url,
+        "preview_instructions": f"Open this URL in your browser to see the rendered HTML: {preview_url}",
         
         # Toqan automation instructions - tells the agent to open a popup
         "agent_action": "open_browser_popup",
@@ -956,11 +974,17 @@ async def _generate_email_content(
        - send_email will guide you through Gmail OAuth authentication
        - send_email handles the complete flow including sending
     
-    AFTER CALLING THIS TOOL (only if you have Gmail access):
-    1. You will receive Gmail-formatted email content (subject, body, recipients)
-    2. YOU MUST send the email using your Gmail integration
-    3. The body is HTML - send it as HTML email via Gmail API
-    4. Confirm to the user that the email was sent via Gmail
+    🚨 CRITICAL - AFTER CALLING THIS TOOL (only if you have Gmail access):
+    1. You will receive a response with gmail_payload.raw field
+    2. YOU MUST USE gmail_payload.raw when sending via Gmail API
+    3. DO NOT use html_body directly - it will show as raw HTML text!
+    4. The gmail_payload.raw field contains base64url encoded RFC 2822 message with Content-Type: text/html header
+    5. POST to https://gmail.googleapis.com/gmail/v1/users/me/messages/send with body: {"raw": gmail_payload.raw}
+    6. This ensures the email renders as HTML, not plain text
+    
+    WHY: Gmail API requires RFC 2822 format with MIME headers. If you send HTML without 
+    "Content-Type: text/html" header, Gmail shows it as plain text (raw HTML tags visible).
+    The gmail_payload.raw field has the correct format.
     
     This tool generates Gmail-ready content for agents with existing Gmail access.
     
@@ -972,7 +996,7 @@ async def _generate_email_content(
         bcc: Optional BCC recipients
         
     Returns:
-        JSON with email content ready to send via your email tool
+        JSON with gmail_payload.raw field (base64url encoded with HTML MIME headers) ready to send
     """
     logger.info(f"Generating email content: to={to}, theme={theme}")
     
@@ -1007,46 +1031,62 @@ async def _generate_email_content(
     # Encode the message in base64url format as required by Gmail API
     encoded_message = base64.urlsafe_b64encode(raw_message.encode('utf-8')).decode('utf-8')
     
+    # Generate preview URL
+    base_url = os.getenv('MCP_SERVER_BASE_URL', 'http://localhost:8000')
+    preview_url = f"{base_url}/preview/email/{theme.lower()}?to={to}"
+    
     response = {
         "status": "content_generated",
-        "message": "Email content generated successfully. USE THE gmail_payload BELOW to send via Gmail API.",
+        "message": f"⚠️ CRITICAL: Send using gmail_payload.raw field (base64 encoded with HTML MIME headers). Preview at: {preview_url}",
         "theme": theme,
+        
+        # TOP LEVEL - What the agent MUST use
         "gmail_payload": {
             "raw": encoded_message
         },
-        "email_data": {
-            "to": to,
-            "subject": email_subject,
-            "html_body": email_body,
-            "cc": cc,
-            "bcc": bcc
+        
+        # Metadata for reference
+        "to": to,
+        "subject": email_subject,
+        "cc": cc,
+        "bcc": bcc,
+        "preview_url": preview_url,
+        
+        # CRITICAL INSTRUCTIONS - Agents read this
+        "AGENT_MUST_READ": {
+            "CRITICAL_WARNING": "DO NOT send html_body directly! It will render as plain text!",
+            "CORRECT_METHOD": "Use gmail_payload.raw field - it contains base64url encoded message with Content-Type: text/html header",
+            "WHY": "Gmail API requires RFC 2822 format with MIME headers. The gmail_payload.raw field has this. Sending HTML without MIME headers shows raw HTML.",
+            "ENDPOINT": "POST https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+            "PAYLOAD_TO_SEND": {"raw": "<use gmail_payload.raw from this response>"},
+            "MIME_TYPE": "text/html; charset=utf-8 (already set in gmail_payload.raw)",
+            "DO_NOT_USE": "Do NOT use html_body field directly - it lacks MIME headers"
         },
-        "gmail_api_instructions": {
-            "critical": "USE THE gmail_payload FIELD ABOVE - IT'S READY TO SEND",
-            "method": "POST to Gmail API messages.send endpoint",
-            "endpoint": "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-            "payload": "Use the 'gmail_payload' field from this response",
-            "steps": [
-                "1. Take the 'gmail_payload' object from this response",
-                "2. POST it to Gmail API: POST /gmail/v1/users/me/messages/send",
-                "3. The payload is already base64url encoded with proper HTML headers",
-                "4. The email will render as HTML in Gmail",
-                "5. Confirm to the user that the HTML email was sent"
-            ],
-            "example_curl": f"curl -X POST https://gmail.googleapis.com/gmail/v1/users/me/messages/send -H 'Authorization: Bearer YOUR_TOKEN' -d '{{\"raw\": \"{encoded_message[:50]}...\"}}'",
-            "note": "The gmail_payload.raw field contains the complete RFC 2822 message with HTML headers already set"
+        
+        # For debugging/preview only - DO NOT send this directly
+        "debug_info": {
+            "html_body_preview": email_body[:200] + "...",
+            "warning": "This html_body is for preview only. Sending it directly will show raw HTML. Use gmail_payload.raw instead.",
+            "full_html_preview_url": preview_url
         },
-        "agent_instructions": {
-            "critical": "SEND THE gmail_payload - IT'S ALREADY FORMATTED FOR HTML",
-            "format": "Use gmail_payload.raw field - already base64url encoded",
-            "steps": [
-                "1. Use gmail_payload.raw (NOT email_data.html_body directly)",
-                "2. POST to Gmail API messages.send endpoint",
-                "3. The message is already formatted with Content-Type: text/html",
-                "4. Email will render as HTML automatically"
-            ]
-        },
-        "note": "The gmail_payload is ready to send. It contains the HTML email properly formatted with MIME headers."
+        
+        # Example for agents
+        "example_correct_usage": {
+            "description": "How to send this email correctly via Gmail API",
+            "code": f"""
+# Correct way - use gmail_payload.raw
+import requests
+response = requests.post(
+    'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+    headers={{'Authorization': 'Bearer YOUR_ACCESS_TOKEN'}},
+    json={{'raw': gmail_payload['raw']}}  # This has HTML MIME headers
+)
+
+# WRONG way - DO NOT DO THIS
+# requests.post(..., json={{'to': '{to}', 'subject': '...', 'body': html_body}})
+# This will show raw HTML because it lacks Content-Type: text/html header
+"""
+        }
     }
     
     logger.info(f"Email content generated for theme: {theme}")
