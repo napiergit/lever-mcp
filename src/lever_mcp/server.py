@@ -366,8 +366,25 @@ if auth_provider:
                         }}, 3000);
                     }} else {{
                         document.getElementById('message').textContent = 'Authorization completed successfully!';
-                        document.getElementById('status').textContent = 'You can now close this tab.';
+                        document.getElementById('status').textContent = 'This tab will close automatically in 5 seconds...';
+                        
+                        // Auto-close tab after 5 seconds
+                        setTimeout(() => {{
+                            window.close();
+                        }}, 5000);
                     }}
+                    
+                    // Fallback: Always try to close after 5 seconds regardless of popup status
+                    // This ensures the tab closes even if window.opener detection fails
+                    setTimeout(() => {{
+                        try {{
+                            window.close();
+                        }} catch (e) {{
+                            // If window.close() fails (some browsers restrict it), 
+                            // at least update the message to tell user they can close manually
+                            document.getElementById('status').textContent = 'You can now close this tab manually.';
+                        }}
+                    }}, 5000);
                 </script>
             </body>
             </html>
@@ -797,26 +814,38 @@ async def _send_email(
         
         # CRITICAL INSTRUCTIONS FOR AGENT
         "AGENT_MUST_DO": {
-            "DISPLAY_URL_PROMINENTLY": f"YOU MUST CLEARLY SHOW THIS CLICKABLE LINK TO THE USER: {oauth_url}",
-            "KEEP_URL_VISIBLE": "Do NOT hide this URL in reasoning - show it prominently in your response to the user",
-            "POLL_CONTINUOUSLY": "Poll the poll_oauth_code tool every 2 seconds for up to 30 seconds (15 attempts)",
-            "DO_NOT_POLL_ONCE": "Do NOT poll just once - keep polling until success or 30 seconds timeout"
+            "DISPLAY_AS_BUTTON": f"Display the OAuth URL as a nice button, not just a link: {oauth_url}",
+            "WAIT_FOR_USER_CLICK": "Wait for user to actually click the authorize button before starting polling",
+            "SHOW_CANCEL_OPTION": "Present a cancel button alongside the authorize button",
+            "POLL_WITH_BACKOFF": "Poll for 60 seconds with exponential backoff (1s, 2s, 4s, 8s, then 8s intervals)",
+            "SHOW_CANCEL_POLLING": "During polling, show a 'Cancel Authorization' button",
+            "DO_NOT_AUTO_START": "Do NOT start polling automatically - wait for user to click authorize button first"
         },
         
         "browser_agent_instructions": {
-            "step_1": f"IMMEDIATELY show user this clickable link: {oauth_url}",
-            "step_2": "Tell user: 'Click the link above, complete OAuth, then I'll automatically detect completion'",
-            "step_3": "Start polling poll_oauth_code tool every 2 seconds for 30 seconds",
-            "step_4": "When poll returns success, extract code and exchange for token",
-            "step_5": "Retry send_email with access_token"
+            "step_1": f"Display OAuth URL as a button: 'Authorize Gmail Access' pointing to {oauth_url}",
+            "step_2": "Show a 'Cancel' button alongside the authorize button",
+            "step_3": "Wait for user to click 'Authorize Gmail Access' button (opens new tab)",
+            "step_4": "After user clicks, start polling with exponential backoff for 60 seconds",
+            "step_5": "During polling, show 'Cancel Authorization' button and countdown timer",
+            "step_6": "When poll returns success, extract code and exchange for token",
+            "step_7": "Retry send_email with access_token"
         },
         "polling_config": {
             "poll_endpoint": f"{base_url}/oauth/poll/{session_id}",
             "status_endpoint": f"{base_url}/oauth/status/{session_id}",
-            "poll_interval_seconds": 2,
-            "max_duration_seconds": 30,
-            "max_attempts": 15,
-            "method": "GET"
+            "exponential_backoff": {
+                "initial_delay": 1,
+                "delays_sequence": [1, 2, 4, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8],  # 1+2+4+8*9 = 79 seconds total
+                "max_duration_seconds": 60,
+                "description": "Start fast (1s), then exponential backoff up to 8s, then 8s intervals"
+            },
+            "method": "GET",
+            "user_feedback": {
+                "show_countdown": True,
+                "show_cancel_button": True,
+                "update_message": "Waiting for authorization... ({{seconds}} seconds remaining)"
+            }
         },
         "browser_automation": {
             "supported": True,
@@ -833,14 +862,25 @@ async def _send_email(
                 "oauth_url": oauth_url,
                 "CRITICAL": "Show this URL prominently in your response, not hidden in reasoning"
             },
-            "2_start_polling": {
-                "description": "Continuously poll for authorization code every 2 seconds for 30 seconds",
+            "2_wait_for_user": {
+                "description": "Wait for user to click the authorize button before starting polling",
+                "user_action_required": True,
+                "button_text": "Authorize Gmail Access",
+                "button_url": oauth_url,
+                "cancel_button_text": "Cancel"
+            },
+            "3_start_polling": {
+                "description": "After user clicks authorize, poll with exponential backoff for 60 seconds",
                 "tool": "poll_oauth_code",
                 "parameters": {"session_id": session_id},
-                "poll_interval": 2,
-                "max_attempts": 15,
-                "duration_seconds": 30,
-                "CRITICAL": "Keep polling every 2 seconds, do NOT stop after first attempt"
+                "exponential_backoff": [1, 2, 4, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8],
+                "max_duration_seconds": 60,
+                "user_feedback": {
+                    "show_timer": True,
+                    "show_cancel_button": True,
+                    "cancel_button_text": "Cancel Authorization"
+                },
+                "CRITICAL": "Use exponential backoff delays, show countdown and cancel option"
             },
             "3_exchange_token": {
                 "description": "Exchange code for access token",
@@ -878,12 +918,31 @@ async def _send_email(
             "step_5": "Agent retries send_email with access_token"
         },
         
-        # Clear user-facing message for the agent to display
-        "USER_MESSAGE_TO_DISPLAY": f"""🔗 **CLICK THIS LINK TO AUTHORIZE GMAIL ACCESS:**
-
-{oauth_url}
-
-After clicking and completing authorization, I'll automatically detect when you're done (takes up to 30 seconds).""",
+        # Clear user-facing message and UI instructions for the agent
+        "USER_INTERFACE_INSTRUCTIONS": {
+            "initial_message": "To send this email, I need to authorize Gmail access. Please click the button below:",
+            "authorize_button": {
+                "text": "🔗 Authorize Gmail Access",
+                "url": oauth_url,
+                "style": "primary",
+                "description": "Opens in new tab"
+            },
+            "cancel_button": {
+                "text": "❌ Cancel",
+                "action": "cancel_email",
+                "style": "secondary"
+            },
+            "waiting_message": "Waiting for you to complete authorization in the new tab...",
+            "polling_message": "Authorization in progress... ({{countdown}} seconds remaining)",
+            "cancel_polling_button": {
+                "text": "❌ Cancel Authorization",
+                "action": "stop_polling",
+                "style": "danger"
+            },
+            "success_message": "✅ Authorization successful! Sending email now...",
+            "timeout_message": "⏱️ Authorization timed out. Please try again.",
+            "cancelled_message": "❌ Authorization cancelled."
+        },
         
         "gmail_api_payload": gmail_payload,
         "available_themes": list(email_templates.keys()),
