@@ -582,14 +582,27 @@ async def _send_email(
     """
     Generate and send a themed email via Gmail API with OAuth 2.0.
     
-    AGENT INSTRUCTIONS:
-    1. If you have OAuth capability (can open browser popups), try calling this tool first without access_token
-    2. The response will include automation instructions (agent_action: "open_browser_popup")
-    3. Follow the popup_instructions to get the authorization code automatically
-    4. Use the exchange_oauth_code tool to get the access_token
-    5. Call this tool again with the access_token parameter
+    ⚡ AGENT INSTRUCTIONS - WHEN TO USE THIS TOOL:
     
-    ALTERNATIVE: If you don't have OAuth capability, use the get_oauth_url tool to get a URL for the user.
+    ❌ DO NOT USE THIS TOOL IF:
+    - You already have an active Google Gmail connection/authentication
+    - The user has NOT specifically asked to use this OAuth flow
+    - You are NOT testing OAuth functionality
+    
+    ✅ USE THIS TOOL ONLY IF:
+    - You do NOT have an existing Google Gmail connection
+    - The user specifically requests to use this OAuth-based email tool
+    - You are testing OAuth functionality
+    
+    👉 IF YOU HAVE GMAIL ACCESS: Use 'generate_email_content' instead
+       - It generates themed emails for agents with existing Gmail access
+       - No OAuth needed
+    
+    OAUTH FLOW (if using this tool):
+    1. Call this tool without access_token
+    2. Follow the popup_instructions to get authorization code
+    3. Use exchange_oauth_code tool to get access_token
+    4. Call this tool again with the access_token parameter
     
     Args:
         to: Recipient email address
@@ -924,32 +937,32 @@ async def _generate_email_content(
     bcc: Optional[str] = None
 ) -> str:
     """
-    Generate themed email content WITHOUT sending it.
+    Generate themed Gmail email content WITHOUT sending it.
     
     ⚡ AGENT INSTRUCTIONS - READ CAREFULLY - WHEN TO USE THIS TOOL:
     
     ✅ USE THIS TOOL ONLY IF:
-    - You have an ALREADY AUTHENTICATED email client (Gmail, Outlook, etc.)
-    - You are CURRENTLY SIGNED IN to an email service
-    - You have native email sending capability
-    - You want beautiful themed emails without going through OAuth
+    - You have an ACTIVE GOOGLE GMAIL CONNECTION (already authenticated)
+    - You are CURRENTLY SIGNED IN to Google Gmail
+    - You can send emails directly via your Gmail integration
+    - You want beautiful themed emails without OAuth flow
     
     ❌ DO NOT USE THIS TOOL IF:
-    - You are NOT already authenticated to an email service
-    - You don't have email sending capability
+    - You do NOT have an active Google Gmail connection
+    - You are NOT authenticated to Gmail
     - The user needs to authenticate first
     
-    👉 IF NOT AUTHENTICATED: Use the 'send_email' tool instead
+    👉 IF NOT AUTHENTICATED TO GMAIL: Use the 'send_email' tool instead
        - send_email will guide you through Gmail OAuth authentication
        - send_email handles the complete flow including sending
     
-    AFTER CALLING THIS TOOL (only if you're already authenticated):
-    1. You will receive the email content (subject, body, recipients)
-    2. YOU MUST send the email using your own authenticated email tool
-    3. Use the HTML body provided - it's beautifully themed!
-    4. Confirm to the user that the email was sent
+    AFTER CALLING THIS TOOL (only if you have Gmail access):
+    1. You will receive Gmail-formatted email content (subject, body, recipients)
+    2. YOU MUST send the email using your Gmail integration
+    3. The body is HTML - send it as HTML email via Gmail API
+    4. Confirm to the user that the email was sent via Gmail
     
-    This tool does NOT require OAuth - it just generates content for agents with existing email access.
+    This tool generates Gmail-ready content for agents with existing Gmail access.
     
     Args:
         to: Recipient email address
@@ -975,27 +988,45 @@ async def _generate_email_content(
     
     response = {
         "status": "content_generated",
-        "message": "Email content generated successfully. YOU MUST NOW SEND THIS EMAIL using your email tool.",
+        "message": "Email content generated successfully. YOU MUST NOW SEND THIS EMAIL using your Gmail integration.",
         "theme": theme,
         "email_data": {
             "to": to,
             "subject": email_subject,
-            "body": email_body,
-            "body_type": "html",
+            "html_body": email_body,
             "cc": cc,
             "bcc": bcc
         },
-        "agent_instructions": {
-            "critical": "YOU MUST SEND THIS EMAIL NOW",
+        "gmail_api_instructions": {
+            "critical": "SEND AS HTML EMAIL VIA GMAIL API",
+            "method": "Use Gmail API with raw RFC 2822 format",
+            "content_type": "text/html; charset=utf-8",
+            "mime_version": "1.0",
             "steps": [
-                "1. Take the email_data from this response",
-                "2. Use your own email sending tool/capability",
-                "3. Send the email with the HTML body provided",
-                "4. Confirm to the user that the email was sent"
+                "1. Create RFC 2822 message with Content-Type: text/html; charset=utf-8",
+                "2. Include MIME-Version: 1.0 header",
+                "3. Base64url encode the complete message",
+                "4. Send via Gmail API messages.send endpoint",
+                "5. Confirm to the user that the HTML email was sent"
             ],
-            "example": "Use your Gmail/Outlook/email tool with the subject and body provided above"
+            "example_headers": {
+                "To": to,
+                "Subject": email_subject,
+                "MIME-Version": "1.0",
+                "Content-Type": "text/html; charset=utf-8"
+            }
         },
-        "note": "This tool only generates content. You are responsible for actually sending the email."
+        "agent_instructions": {
+            "critical": "YOU MUST SEND THIS AS HTML EMAIL",
+            "format": "HTML (not plain text)",
+            "steps": [
+                "1. Use the html_body field (not as plain text)",
+                "2. Send via Gmail API with Content-Type: text/html",
+                "3. Ensure HTML rendering is enabled",
+                "4. Verify the email renders properly in Gmail"
+            ]
+        },
+        "note": "This is HTML content. MUST be sent as HTML email via Gmail API, not as plain text."
     }
     
     logger.info(f"Email content generated for theme: {theme}")
