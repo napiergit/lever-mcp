@@ -1037,7 +1037,7 @@ async def _generate_email_content(
     
     response = {
         "status": "content_generated",
-        "message": f"⚠️ CRITICAL: Send using gmail_payload.raw field (base64 encoded with HTML MIME headers). Preview at: {preview_url}",
+        "message": f"⚠️ CRITICAL: Use gmail_payload.raw OR set content_type='text/html' when sending body. Preview at: {preview_url}",
         "theme": theme,
         
         # TOP LEVEL - What the agent MUST use
@@ -1045,8 +1045,14 @@ async def _generate_email_content(
             "raw": encoded_message
         },
         
+        # For agents using their own Gmail integration (not Gmail API)
+        "body": email_body,
+        "content_type": "text/html",
+        "mime_type": "text/html; charset=utf-8",
+        
         # Metadata for reference
         "to": to,
+        "recipient": to,  # Some agents use 'recipient' instead of 'to'
         "subject": email_subject,
         "cc": cc,
         "bcc": bcc,
@@ -1054,13 +1060,29 @@ async def _generate_email_content(
         
         # CRITICAL INSTRUCTIONS - Agents read this
         "AGENT_MUST_READ": {
-            "CRITICAL_WARNING": "DO NOT send html_body directly! It will render as plain text!",
-            "CORRECT_METHOD": "Use gmail_payload.raw field - it contains base64url encoded message with Content-Type: text/html header",
-            "WHY": "Gmail API requires RFC 2822 format with MIME headers. The gmail_payload.raw field has this. Sending HTML without MIME headers shows raw HTML.",
-            "ENDPOINT": "POST https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-            "PAYLOAD_TO_SEND": {"raw": "<use gmail_payload.raw from this response>"},
-            "MIME_TYPE": "text/html; charset=utf-8 (already set in gmail_payload.raw)",
-            "DO_NOT_USE": "Do NOT use html_body field directly - it lacks MIME headers"
+            "CRITICAL_WARNING": "The 'body' field contains HTML. You MUST specify content_type='text/html' or it will show raw HTML tags!",
+            
+            "OPTION_1_Gmail_API": {
+                "description": "If using Gmail API directly",
+                "method": "Use gmail_payload.raw field - it has MIME headers built in",
+                "endpoint": "POST https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+                "payload": {"raw": "<use gmail_payload.raw from this response>"}
+            },
+            
+            "OPTION_2_Custom_Integration": {
+                "description": "If using your own Gmail integration (not Gmail API)",
+                "method": "Use body field BUT you MUST set content_type or mimeType parameter",
+                "required_fields": {
+                    "recipient": to,
+                    "subject": email_subject,
+                    "body": "<use body field from this response>",
+                    "content_type": "text/html",
+                    "mimeType": "text/html; charset=utf-8"
+                },
+                "critical": "WITHOUT content_type='text/html', the email will show raw HTML tags!"
+            },
+            
+            "WHY": "HTML emails need Content-Type: text/html header. Without it, Gmail shows raw HTML tags instead of rendering the HTML."
         },
         
         # For debugging/preview only - DO NOT send this directly
