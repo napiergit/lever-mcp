@@ -10,10 +10,17 @@ import logging
 import json
 import base64
 import os
+import time
+import uuid
+from datetime import datetime, timedelta
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("lever-mcp")
+
+# In-memory storage for OAuth sessions (browser agents)
+# Structure: {session_id: {"code": str, "timestamp": datetime, "state": str}}
+oauth_sessions = {}
 
 # Shared email templates for all email tools
 EMAIL_TEMPLATES = {
@@ -273,6 +280,17 @@ if auth_provider:
                 </html>
             """, status_code=400)
         
+        # Store code for browser agent polling if this looks like a browser agent session
+        session_id = None
+        if state and state.startswith('browser_agent_'):
+            session_id = state.replace('browser_agent_', '')
+            oauth_sessions[session_id] = {
+                "code": code,
+                "timestamp": datetime.now(),
+                "state": state
+            }
+            logger.info(f"Stored OAuth code for browser agent session: {session_id}")
+        
         # Return success page that closes popup and sends code to parent
         return HTMLResponse(f"""
             <html>
@@ -349,6 +367,8 @@ if auth_provider:
                     <p class="status" id="status">
                         Checking if opened as popup...
                     </p>
+                    
+                    {f'<div style="margin-top: 20px; padding: 15px; background: #e8f5e8; border: 1px solid #4caf50; border-radius: 8px;"><strong>Browser Agent Session:</strong> {session_id}<br>Code stored for polling.</div>' if session_id else ''}
                 </div>
                 <script>
                     const code = '{code}';
@@ -509,6 +529,73 @@ async def health_check(request: Request):
         "status": "healthy",
         "oauth_configured": oauth_config.is_configured(),
         "base_url": os.getenv('MCP_SERVER_BASE_URL', 'not set')
+    })
+
+# Add OAuth session polling endpoint for browser agents
+@mcp.custom_route("/oauth/poll/{session_id}", methods=["GET"])
+async def oauth_poll_session(request: Request):
+    """Poll for OAuth code by session ID (browser agents)."""
+    session_id = request.path_params.get("session_id")
+    
+    if not session_id or session_id not in oauth_sessions:
+        return JSONResponse({
+            "status": "pending",
+            "message": "Session not found or code not yet available"
+        })
+    
+    session_data = oauth_sessions[session_id]
+    
+    # Check if session is expired (10 minutes)
+    if datetime.now() - session_data["timestamp"] > timedelta(minutes=10):
+        del oauth_sessions[session_id]
+        return JSONResponse({
+            "status": "expired",
+            "message": "Session expired. Please restart OAuth flow."
+        }, status_code=410)
+    
+    # Return the code and clean up
+    code = session_data["code"]
+    del oauth_sessions[session_id]
+    
+    return JSONResponse({
+        "status": "success",
+        "code": code,
+        "message": "Authorization code retrieved successfully"
+    })
+
+# Add OAuth session status endpoint
+@mcp.custom_route("/oauth/status/{session_id}", methods=["GET"])
+async def oauth_session_status(request: Request):
+    """Check OAuth session status without consuming the code."""
+    session_id = request.path_params.get("session_id")
+    
+    if not session_id:
+        return JSONResponse({
+            "status": "invalid",
+            "message": "Session ID required"
+        }, status_code=400)
+    
+    if session_id not in oauth_sessions:
+        return JSONResponse({
+            "status": "pending",
+            "message": "Waiting for user authorization...",
+            "session_id": session_id
+        })
+    
+    session_data = oauth_sessions[session_id]
+    
+    # Check if expired
+    if datetime.now() - session_data["timestamp"] > timedelta(minutes=10):
+        del oauth_sessions[session_id]
+        return JSONResponse({
+            "status": "expired",
+            "message": "Session expired. Please restart OAuth flow."
+        }, status_code=410)
+    
+    return JSONResponse({
+        "status": "ready",
+        "message": "Authorization code is ready",
+        "session_id": session_id
     })
 
 # Add OAuth diagnostic endpoint
@@ -822,9 +909,12 @@ async def _get_oauth_url(user_id: str = "default") -> str:
         base_url = os.getenv('MCP_SERVER_BASE_URL', 'http://localhost:8000')
         from urllib.parse import urlencode
         
+        # Generate session ID for browser agents 
+        session_id = str(uuid.uuid4())
+        
         params = {
             "response_type": "code",
-            "state": f"user_{user_id}"
+            "state": f"browser_agent_{session_id}"
         }
         
         # Return our /authorize endpoint which will handle the redirect to Google
@@ -835,16 +925,26 @@ async def _get_oauth_url(user_id: str = "default") -> str:
         response = {
             "status": "success",
             "auth_url": auth_url,
+            "session_id": session_id,
             "discovery_endpoint": f"{base_url}/.well-known/oauth-authorization-server",
+            "polling_endpoint": f"{base_url}/oauth/poll/{session_id}",
+            "status_endpoint": f"{base_url}/oauth/status/{session_id}",
             "instructions": [
-                "1. User should visit the auth_url in their browser",
+                "1. User should visit the auth_url in their browser", 
                 "2. They will be redirected to Google for authorization",
-                "3. After granting permissions, they'll be redirected back with a code",
-                "4. The code will be displayed in the callback page",
-                "5. Call exchange_oauth_code tool with the code"
+                "3. After granting permissions, code will be stored for polling",
+                "4. Poll the polling_endpoint until you get the authorization code",
+                "5. Call exchange_oauth_code tool with the retrieved code"
             ],
+            "browser_agent_flow": {
+                "supported": True,
+                "method": "polling",
+                "poll_interval_seconds": 2,
+                "max_poll_duration_minutes": 10,
+                "instructions": "Poll status_endpoint every 2 seconds until status is 'ready', then call polling_endpoint to get code"
+            },
             "user_id": user_id,
-            "note": "This URL uses the MCP server's /authorize endpoint for proper scope handling"
+            "note": "This URL uses browser agent polling flow - code will be stored server-side for retrieval"
         }
         
         return json.dumps(response, indent=2)
@@ -905,6 +1005,141 @@ async def _exchange_oauth_code(code: str, user_id: str = "default") -> str:
         
     except Exception as e:
         logger.error(f"Error exchanging OAuth code: {e}")
+        return json.dumps({
+            "status": "error",
+            "message": str(e)
+        }, indent=2)
+
+
+async def _get_browser_agent_oauth_url(user_id: str = "default") -> str:
+    """
+    Get OAuth authorization URL optimized for browser-based LLM agents.
+    
+    This flow is designed for agents that cannot open popups but can poll endpoints.
+    The user clicks the link, completes OAuth, and the agent polls for the result.
+    
+    Args:
+        user_id: User identifier for token storage
+        
+    Returns:
+        JSON with authorization URL and polling instructions for browser agents
+    """
+    logger.info(f"Generating browser agent OAuth URL for user: {user_id}")
+    
+    try:
+        if not oauth_config.is_configured():
+            return json.dumps({
+                "status": "error",
+                "message": "OAuth not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables."
+            }, indent=2)
+        
+        # Generate unique session ID for this OAuth flow
+        session_id = str(uuid.uuid4())
+        base_url = os.getenv('MCP_SERVER_BASE_URL', 'http://localhost:8000')
+        
+        # Create authorization URL with session tracking
+        from urllib.parse import urlencode
+        params = {
+            "response_type": "code",
+            "state": f"browser_agent_{session_id}"
+        }
+        auth_url = f"{base_url}/authorize?{urlencode(params)}"
+        
+        logger.info(f"Generated browser agent OAuth session: {session_id}")
+        
+        response = {
+            "status": "success", 
+            "auth_url": auth_url,
+            "session_id": session_id,
+            "polling_endpoint": f"{base_url}/oauth/poll/{session_id}",
+            "status_endpoint": f"{base_url}/oauth/status/{session_id}",
+            
+            # Instructions for browser-based LLM agents
+            "agent_instructions": {
+                "step_1": "Present auth_url to user as clickable link",
+                "step_2": "User clicks link and completes OAuth in same browser tab", 
+                "step_3": "Poll status_endpoint every 2 seconds (max 10 minutes)",
+                "step_4": "When status is 'ready', call polling_endpoint to get code",
+                "step_5": "Call exchange_oauth_code with retrieved code"
+            },
+            
+            "polling_config": {
+                "poll_interval_seconds": 2,
+                "max_duration_minutes": 10,
+                "status_check_url": f"{base_url}/oauth/status/{session_id}",
+                "code_retrieval_url": f"{base_url}/oauth/poll/{session_id}"
+            },
+            
+            "user_message": f"Please click this link to authorize Gmail access: {auth_url}",
+            "technical_note": "This OAuth flow stores the authorization code server-side for polling by browser agents",
+            "user_id": user_id
+        }
+        
+        return json.dumps(response, indent=2)
+        
+    except Exception as e:
+        logger.error(f"Error generating browser agent OAuth URL: {e}")
+        return json.dumps({
+            "status": "error",
+            "message": str(e)
+        }, indent=2)
+
+
+async def _poll_oauth_code(session_id: str) -> str:
+    """
+    Poll for OAuth authorization code by session ID (browser agents).
+    
+    Args:
+        session_id: OAuth session ID from get_browser_agent_oauth_url
+        
+    Returns:
+        JSON with authorization code if ready, or status if still pending
+    """
+    logger.info(f"Polling OAuth code for session: {session_id}")
+    
+    try:
+        if not session_id:
+            return json.dumps({
+                "status": "error",
+                "message": "Session ID is required"
+            }, indent=2)
+        
+        # Check if session exists and has code
+        if session_id not in oauth_sessions:
+            return json.dumps({
+                "status": "pending",
+                "message": "Waiting for user to complete OAuth authorization...",
+                "session_id": session_id,
+                "action": "continue_polling"
+            }, indent=2)
+        
+        session_data = oauth_sessions[session_id]
+        
+        # Check if session expired (10 minutes)
+        if datetime.now() - session_data["timestamp"] > timedelta(minutes=10):
+            del oauth_sessions[session_id]
+            return json.dumps({
+                "status": "expired",
+                "message": "OAuth session expired. Please restart the flow.",
+                "action": "restart_oauth"
+            }, indent=2)
+        
+        # Return the code and clean up session
+        code = session_data["code"]
+        del oauth_sessions[session_id]
+        
+        logger.info(f"OAuth code retrieved for session: {session_id}")
+        
+        return json.dumps({
+            "status": "success",
+            "code": code,
+            "message": "Authorization code retrieved successfully",
+            "next_step": "Call exchange_oauth_code with this code",
+            "session_id": session_id
+        }, indent=2)
+        
+    except Exception as e:
+        logger.error(f"Error polling OAuth code: {e}")
         return json.dumps({
             "status": "error",
             "message": str(e)
@@ -1139,6 +1374,10 @@ mcp.tool(name="generate_email_content")(_generate_email_content)
 mcp.tool(name="get_oauth_url")(_get_oauth_url)
 mcp.tool(name="exchange_oauth_code")(_exchange_oauth_code)
 mcp.tool(name="check_oauth_status")(_check_oauth_status)
+
+# Browser agent specific OAuth tools
+mcp.tool(name="get_browser_agent_oauth_url")(_get_browser_agent_oauth_url)
+mcp.tool(name="poll_oauth_code")(_poll_oauth_code)
 
 if __name__ == "__main__":
     mcp.run()
