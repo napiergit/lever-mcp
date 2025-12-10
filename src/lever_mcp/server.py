@@ -317,32 +317,13 @@ if auth_provider:
                     h1 {{ color: #667eea; margin: 0 0 20px 0; }}
                     p {{ color: #666; font-size: 16px; margin: 10px 0; }}
                     .success {{ font-size: 60px; margin-bottom: 20px; }}
-                    .code-box {{
-                        background: #f5f5f5;
-                        border: 2px solid #e0e0e0;
+                    .info-box {{
+                        background: #f9f9f9;
+                        border: 1px solid #ddd;
                         border-radius: 8px;
                         padding: 15px;
                         margin: 20px 0;
-                        word-break: break-all;
-                        font-family: monospace;
-                        font-size: 12px;
-                        color: #333;
-                    }}
-                    .copy-btn {{
-                        background: #667eea;
-                        color: white;
-                        border: none;
-                        padding: 10px 20px;
-                        border-radius: 6px;
-                        cursor: pointer;
-                        font-size: 14px;
-                        margin-top: 10px;
-                    }}
-                    .copy-btn:hover {{
-                        background: #5568d3;
-                    }}
-                    .copy-btn:active {{
-                        background: #4451b8;
+                        text-align: left;
                     }}
                     .status {{
                         font-size: 14px;
@@ -357,32 +338,15 @@ if auth_provider:
                     <h1>Authorization Successful!</h1>
                     <p id="message">Sending authorization code...</p>
                     
-                    <div class="code-box" id="codeBox">
-                        <strong>Authorization Code:</strong><br>
-                        {code}
-                    </div>
-                    
-                    <button class="copy-btn" onclick="copyCode()">📋 Copy Code</button>
-                    
                     <p class="status" id="status">
-                        Checking if opened as popup...
+                        Authorization completed successfully!
                     </p>
                     
-                    {f'<div style="margin-top: 20px; padding: 15px; background: #e8f5e8; border: 1px solid #4caf50; border-radius: 8px;"><strong>Browser Agent Session:</strong> {session_id}<br>Code stored for polling.</div>' if session_id else ''}
+                    {f'<div style="margin-top: 20px; padding: 15px; background: #e8f5e8; border: 1px solid #4caf50; border-radius: 8px;"><strong>✅ Authorization Complete</strong><br>You can now close this tab - the authorization has been automatically processed.</div>' if session_id else '<div style="margin-top: 20px; padding: 15px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 8px;"><strong>Authorization Code:</strong><br><code style="font-family: monospace; font-size: 12px; word-break: break-all;">{code}</code><br><br>You can now close this tab.</div>'}
                 </div>
                 <script>
                     const code = '{code}';
                     const state = '{state}';
-                    
-                    function copyCode() {{
-                        navigator.clipboard.writeText(code).then(() => {{
-                            const btn = document.querySelector('.copy-btn');
-                            btn.textContent = '✅ Copied!';
-                            setTimeout(() => {{
-                                btn.textContent = '📋 Copy Code';
-                            }}, 2000);
-                        }});
-                    }}
                     
                     // Check if opened as popup
                     if (window.opener) {{
@@ -401,8 +365,8 @@ if auth_provider:
                             window.close();
                         }}, 3000);
                     }} else {{
-                        document.getElementById('message').textContent = 'Copy the code above and paste it back in the chat.';
-                        document.getElementById('status').textContent = 'You can close this window after copying the code.';
+                        document.getElementById('message').textContent = 'Authorization completed successfully!';
+                        document.getElementById('status').textContent = 'You can now close this tab.';
                     }}
                 </script>
             </body>
@@ -830,17 +794,28 @@ async def _send_email(
         "expected_result": "authorization_code",
         "automation_available": True,
         "action": "browser_agent_polling",
+        
+        # CRITICAL INSTRUCTIONS FOR AGENT
+        "AGENT_MUST_DO": {
+            "DISPLAY_URL_PROMINENTLY": f"YOU MUST CLEARLY SHOW THIS CLICKABLE LINK TO THE USER: {oauth_url}",
+            "KEEP_URL_VISIBLE": "Do NOT hide this URL in reasoning - show it prominently in your response to the user",
+            "POLL_CONTINUOUSLY": "Poll the poll_oauth_code tool every 2 seconds for up to 30 seconds (15 attempts)",
+            "DO_NOT_POLL_ONCE": "Do NOT poll just once - keep polling until success or 30 seconds timeout"
+        },
+        
         "browser_agent_instructions": {
-            "step_1": "Present oauth_url to user as clickable link",
-            "step_2": "Start polling poll_endpoint every 2 seconds",
-            "step_3": "When poll returns success, extract code and exchange for token",
-            "step_4": "Retry send_email with access_token"
+            "step_1": f"IMMEDIATELY show user this clickable link: {oauth_url}",
+            "step_2": "Tell user: 'Click the link above, complete OAuth, then I'll automatically detect completion'",
+            "step_3": "Start polling poll_oauth_code tool every 2 seconds for 30 seconds",
+            "step_4": "When poll returns success, extract code and exchange for token",
+            "step_5": "Retry send_email with access_token"
         },
         "polling_config": {
             "poll_endpoint": f"{base_url}/oauth/poll/{session_id}",
             "status_endpoint": f"{base_url}/oauth/status/{session_id}",
             "poll_interval_seconds": 2,
-            "max_duration_minutes": 10,
+            "max_duration_seconds": 30,
+            "max_attempts": 15,
             "method": "GET"
         },
         "browser_automation": {
@@ -853,16 +828,19 @@ async def _send_email(
         # Automated flow for browser agents:
         "automated_flow": {
             "1_present_link": {
-                "description": "Show user the OAuth link to click",
-                "user_message": f"Please click this link to authorize Gmail: {oauth_url}",
-                "oauth_url": oauth_url
+                "description": "PROMINENTLY display OAuth link to user - do NOT hide in reasoning",
+                "user_message": f"🔗 CLICK THIS LINK TO AUTHORIZE GMAIL: {oauth_url}",
+                "oauth_url": oauth_url,
+                "CRITICAL": "Show this URL prominently in your response, not hidden in reasoning"
             },
             "2_start_polling": {
-                "description": "Begin polling for authorization code",
+                "description": "Continuously poll for authorization code every 2 seconds for 30 seconds",
                 "tool": "poll_oauth_code",
                 "parameters": {"session_id": session_id},
                 "poll_interval": 2,
-                "max_attempts": 300  # 10 minutes
+                "max_attempts": 15,
+                "duration_seconds": 30,
+                "CRITICAL": "Keep polling every 2 seconds, do NOT stop after first attempt"
             },
             "3_exchange_token": {
                 "description": "Exchange code for access token",
@@ -893,12 +871,19 @@ async def _send_email(
         
         # Manual fallback (if automation fails)
         "manual_instructions": {
-            "step_1": "User clicks the OAuth URL to authorize",
-            "step_2": "User completes OAuth in browser (same tab)", 
-            "step_3": "Agent polls for code using poll_oauth_code tool",
+            "step_1": f"Show user this URL prominently: {oauth_url}",
+            "step_2": "User clicks OAuth URL and completes authorization", 
+            "step_3": "Agent continuously polls poll_oauth_code tool every 2 seconds for 30 seconds",
             "step_4": "Agent exchanges code using exchange_oauth_code tool",
             "step_5": "Agent retries send_email with access_token"
         },
+        
+        # Clear user-facing message for the agent to display
+        "USER_MESSAGE_TO_DISPLAY": f"""🔗 **CLICK THIS LINK TO AUTHORIZE GMAIL ACCESS:**
+
+{oauth_url}
+
+After clicking and completing authorization, I'll automatically detect when you're done (takes up to 30 seconds).""",
         
         "gmail_api_payload": gmail_payload,
         "available_themes": list(email_templates.keys()),
