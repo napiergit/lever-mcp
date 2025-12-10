@@ -798,13 +798,17 @@ async def _send_email(
         "raw": encoded_message
     }
     
-    # Build OAuth authorization URL for the agent
+    # Build OAuth authorization URL for browser agents (polling-based)
     base_url = os.getenv('MCP_SERVER_BASE_URL', 'http://localhost:8000')
     from urllib.parse import urlencode
+    
+    # Generate session ID for browser agent polling
+    session_id = str(uuid.uuid4())
+    
     oauth_params = {
         "response_type": "code",
         "scope": " ".join(GMAIL_SCOPES),
-        "state": f"email_to_{user_id}"
+        "state": f"browser_agent_{session_id}"
     }
     oauth_url = f"{base_url}/authorize?{urlencode(oauth_params)}"
     preview_url = f"{base_url}/preview/email/{theme.lower()}?to={to}"
@@ -819,38 +823,54 @@ async def _send_email(
         "preview_url": preview_url,
         "preview_instructions": f"Open this URL in your browser to see the rendered HTML: {preview_url}",
         
-        # Toqan automation instructions - tells the agent to open a popup
-        "agent_action": "open_browser_popup",
-        "popup_url": oauth_url,
+        # Browser agent automation instructions - polling-based flow
+        "agent_action": "browser_agent_oauth_polling",
+        "oauth_url": oauth_url,
+        "session_id": session_id,
         "expected_result": "authorization_code",
         "automation_available": True,
-        "action": "open_oauth_popup",
-        "popup_instructions": {
-            "url": oauth_url,
-            "capture_callback": True,
-            "auto_extract_code": True,
-            "callback_url_pattern": f"{base_url}/oauth/callback*"
+        "action": "browser_agent_polling",
+        "browser_agent_instructions": {
+            "step_1": "Present oauth_url to user as clickable link",
+            "step_2": "Start polling poll_endpoint every 2 seconds",
+            "step_3": "When poll returns success, extract code and exchange for token",
+            "step_4": "Retry send_email with access_token"
+        },
+        "polling_config": {
+            "poll_endpoint": f"{base_url}/oauth/poll/{session_id}",
+            "status_endpoint": f"{base_url}/oauth/status/{session_id}",
+            "poll_interval_seconds": 2,
+            "max_duration_minutes": 10,
+            "method": "GET"
         },
         "browser_automation": {
             "supported": True,
-            "method": "popup_window",
-            "callback_handling": "automatic",
-            "window_features": "width=500,height=600,popup=yes"
+            "method": "polling",
+            "popup_required": False,
+            "same_tab_flow": True
         },
         
-        # After getting the code, agent should:
-        "next_steps": {
-            "1_exchange_code": {
-                "description": "Exchange authorization code for access token",
-                "endpoint": f"{base_url}/token",
-                "method": "POST",
-                "body": {
-                    "code": "<code_from_callback>",
-                    "grant_type": "authorization_code"
-                }
+        # Automated flow for browser agents:
+        "automated_flow": {
+            "1_present_link": {
+                "description": "Show user the OAuth link to click",
+                "user_message": f"Please click this link to authorize Gmail: {oauth_url}",
+                "oauth_url": oauth_url
             },
-            "2_retry_send": {
-                "description": "Call send_email again with the access_token",
+            "2_start_polling": {
+                "description": "Begin polling for authorization code",
+                "tool": "poll_oauth_code",
+                "parameters": {"session_id": session_id},
+                "poll_interval": 2,
+                "max_attempts": 300  # 10 minutes
+            },
+            "3_exchange_token": {
+                "description": "Exchange code for access token",
+                "tool": "exchange_oauth_code",
+                "parameters": {"code": "<from_polling>", "user_id": user_id}
+            },
+            "4_retry_send": {
+                "description": "Resend email with token",
                 "tool": "send_email",
                 "parameters": {
                     "to": to,
@@ -858,18 +878,26 @@ async def _send_email(
                     "subject": email_subject,
                     "cc": cc,
                     "bcc": bcc,
-                    "access_token": "<token_from_step_1>",
+                    "access_token": "<from_token_exchange>",
                     "user_id": user_id
                 }
             }
         },
         
-        # Fallback for manual flow
+        # Alternative tools available
+        "alternative_tools": {
+            "browser_agent_oauth": "get_browser_agent_oauth_url",
+            "polling": "poll_oauth_code",
+            "token_exchange": "exchange_oauth_code"
+        },
+        
+        # Manual fallback (if automation fails)
         "manual_instructions": {
             "step_1": "User clicks the OAuth URL to authorize",
-            "step_2": "User copies the authorization code from callback",
-            "step_3": "Agent exchanges code for token",
-            "step_4": "Agent retries send_email with access_token"
+            "step_2": "User completes OAuth in browser (same tab)", 
+            "step_3": "Agent polls for code using poll_oauth_code tool",
+            "step_4": "Agent exchanges code using exchange_oauth_code tool",
+            "step_5": "Agent retries send_email with access_token"
         },
         
         "gmail_api_payload": gmail_payload,
