@@ -681,12 +681,12 @@ async def _send_email(
     
     🚨 CRITICAL AGENT INSTRUCTIONS - READ CAREFULLY:
     
-    🚨 CRITICAL: SHOW LINK + WAIT FOR USER TO CONFIRM CLICK + THEN POLL:
+    🚨 CRITICAL: SHOW LINK + START POLLING IMMEDIATELY:
     1. Display the OAuth link prominently to the user
-    2. Ask user to confirm when they've clicked the link
-    3. Once user confirms they clicked, IMMEDIATELY start polling
-    4. Tell user: 'Click the link above, then let me know you've clicked it so I can start checking!'
-    5. Flow: show link → user clicks → user confirms click → immediately start polling
+    2. IMMEDIATELY start polling (don't wait for any confirmation)
+    3. Tell user: 'Click the link - I'm already watching for completion!'
+    4. User clicks while polling is running → seamless detection
+    5. Flow: show link + start polling → user clicks → automatic detection
     
     🔄 POLLING REQUIREMENTS:
     1. Use poll_oauth_code tool with exponential backoff (1s, 2s, 4s, 8s intervals)
@@ -839,21 +839,21 @@ async def _send_email(
         # CRITICAL INSTRUCTIONS FOR AGENT
         "AGENT_MUST_DO": {
             "DISPLAY_AS_BUTTON": f"Display the OAuth URL as a nice button, not just a link: {oauth_url}",
-            "CRITICAL_FLOW": "Show OAuth link + wait for user to confirm they clicked + then start polling",
+            "CRITICAL_FLOW": "Show OAuth link + immediately start polling = seamless experience",
             "DO_NOT_HIDE_LINK": "DO NOT hide the OAuth link in reasoning - show it prominently in your response",
-            "WAIT_FOR_CLICK_CONFIRMATION": "Wait for user to confirm they've clicked the OAuth link",
-            "START_POLLING_AFTER_CONFIRMATION": "Once user confirms they clicked, immediately start polling",
-            "ASK_FOR_CLICK_CONFIRMATION": "Ask user to let you know when they've clicked the link (not when they're done)",
+            "START_POLLING_IMMEDIATELY": "Start polling right after showing the OAuth link - no waiting",
+            "NO_CONFIRMATION_NEEDED": "Don't wait for user confirmation - just start polling automatically",
+            "SEAMLESS_EXPERIENCE": "User sees link, clicks it, and completion is detected automatically",
             "POLL_WITH_BACKOFF": "Poll for 60 seconds with exponential backoff (1s, 2s, 4s, 8s, then 8s intervals)",
             "RANDOMIZE_POLLS": "Add different parameters to each poll call (attempt number, timestamp) to avoid identical calls error",
-            "USER_MESSAGE": "Say: 'Click the link above, then let me know you've clicked it so I can start checking!'"
+            "USER_MESSAGE": "Say: 'Click the link - I'm already watching for completion!'"
         },
         
         "browser_agent_instructions": {
             "step_1": f"Display OAuth URL as a button: 'Authorize Gmail Access' pointing to {oauth_url}",
             "step_2": "Show a 'Cancel' button alongside the authorize button", 
-            "step_3": "Tell user: 'Click the link above, then let me know you've clicked it so I can start checking!'",
-            "step_4": "Wait for user to confirm they clicked the link, then immediately start polling",
+            "step_3": "Tell user: 'Click the link - I'm already watching for completion!'",
+            "step_4": "IMMEDIATELY start polling with exponential backoff for 60 seconds (don't wait)",
             "step_5": "During polling, show 'Cancel Authorization' button and countdown timer",
             "step_6": "When poll returns success, extract code and exchange for token",
             "step_7": "Retry send_email with access_token"
@@ -889,14 +889,15 @@ async def _send_email(
                 "oauth_url": oauth_url,
                 "CRITICAL": "Show this URL prominently in your response, not hidden in reasoning"
             },
-            "2_auto_start_polling": {
-                "description": "Immediately start polling after showing the authorize button - seamless flow",
+            "2_start_polling_immediately": {
+                "description": "Start polling immediately after showing OAuth link - no waiting",
                 "user_action_required": False,
                 "button_text": "Authorize Gmail Access", 
                 "button_url": oauth_url,
                 "cancel_button_text": "Cancel",
                 "auto_start": True,
-                "user_message": "Click the link above - I'm already watching for completion!"
+                "immediate_polling": True,
+                "user_message": "Click the link - I'm already watching for completion!"
             },
             "3_start_polling": {
                 "description": "After user clicks authorize, poll with exponential backoff for 60 seconds",
@@ -954,7 +955,7 @@ async def _send_email(
         
         # Clear user-facing message and UI instructions for the agent
         "USER_INTERFACE_INSTRUCTIONS": {
-            "initial_message": "I need Gmail authorization to send this email. Click the link below, then let me know you've clicked it!",
+            "initial_message": "I need Gmail authorization to send this email. Click the link below - I'm already watching for completion!",
             "authorize_button": {
                 "text": "🔗 Authorize Gmail Access",
                 "url": oauth_url,
@@ -966,7 +967,7 @@ async def _send_email(
                 "action": "cancel_email",
                 "style": "secondary"
             },
-            "click_confirmation_needed": "Please let me know when you've clicked the authorization link above so I can start checking for completion.",
+            "auto_polling_active": "I'm automatically checking for authorization completion - just click the link above!",
             "waiting_message": "🔄 Watching for authorization completion... Click the link above if you haven't already!",
             "polling_message": "Authorization in progress... ({{countdown}} seconds remaining)",
             "cancel_polling_button": {
