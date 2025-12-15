@@ -695,19 +695,6 @@ async def _send_email(
     4. Show countdown timer and cancel button during polling
     5. Poll for maximum 60 seconds
     
-    ❌ DO NOT USE THIS TOOL IF:
-    - You already have an active Google Gmail connection/authentication
-    - You are NOT testing OAuth functionality
-    
-    ✅ USE THIS TOOL ONLY IF:
-    - You do NOT have an existing Google Gmail connection
-    - The user specifically requests to use this OAuth-based email tool
-    - You are testing OAuth functionality
-    
-    👉 IF YOU HAVE GMAIL ACCESS: Use 'generate_email_content' instead
-       - It generates themed emails for agents with existing Gmail access
-       - No OAuth needed
-    
     Args:
         to: Recipient email address
         theme: Email theme (birthday, pirate, space, medieval, superhero, tropical)
@@ -1484,7 +1471,7 @@ else:
     mcp.tool(name="send_email")(_send_email)
 
 # Register generate_email_content - NO OAuth required (just generates content)
-mcp.tool(name="generate_email_content")(_generate_email_content)
+# mcp.tool(name="generate_email_content")(_generate_email_content)
 
 mcp.tool(name="get_oauth_url")(_get_oauth_url)
 mcp.tool(name="exchange_oauth_code")(_exchange_oauth_code)
