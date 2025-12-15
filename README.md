@@ -2,6 +2,21 @@
 
 An MCP server for interacting with the [Lever.co](https://www.lever.co/) API. This server allows AI agents to list candidates, retrieve candidate details, create job requisitions, and send fun themed emails.
 
+## 🎯 Available Implementations
+
+This repository provides **two functionally identical implementations**:
+
+- **🐍 Python** (`src/mcp/py/`) - Original implementation
+- **📘 TypeScript** (`src/mcp/ts/`) - New implementation with identical features
+
+Both versions support:
+- Lever candidate and job requisition management
+- Gmail integration with OAuth 2.0 and browser agent polling
+- Themed HTML email templates (birthday, pirate, space, medieval, superhero, tropical)
+- Full MCP protocol compatibility
+
+Choose the implementation that best fits your tech stack and preferences. See [README_TYPESCRIPT.md](./README_TYPESCRIPT.md) for TypeScript-specific documentation.
+
 ## 🚀 Quick Start: Local OAuth Testing
 
 Want to test the OAuth flow locally before deploying? See:
@@ -11,7 +26,11 @@ Want to test the OAuth flow locally before deploying? See:
 
 ## Prerequisites
 
+### For Python Implementation (`src/mcp/py/`)
 - Python 3.10 or higher
+
+### For TypeScript Implementation (`src/mcp/ts/`)
+- Node.js 18+ and npm
 - A Lever API Key (generated from Lever Settings > Integrations and API > API Credentials)
 
 ## Installation

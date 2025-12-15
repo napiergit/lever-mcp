@@ -1,8 +1,8 @@
 from fastmcp import FastMCP
 from fastmcp.server.auth import OAuthProxy, StaticTokenVerifier
-from lever_mcp.client import LeverClient
-from lever_mcp.gmail_client import GmailClient
-from lever_mcp.oauth_config import oauth_config, GMAIL_SCOPES
+from .client import LeverClient
+from .gmail_client import GmailClient
+from .oauth_config import oauth_config, GMAIL_SCOPES
 from typing import Optional, Dict, Any
 from starlette.responses import JSONResponse, RedirectResponse, HTMLResponse
 from starlette.requests import Request

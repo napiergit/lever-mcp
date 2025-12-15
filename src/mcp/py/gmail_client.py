@@ -9,7 +9,7 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from lever_mcp.oauth_config import oauth_config, GMAIL_SCOPES
+from .oauth_config import oauth_config, GMAIL_SCOPES
 
 logger = logging.getLogger(__name__)
 
