@@ -227,6 +227,33 @@ async function sendEmail(
         preview_url: previewUrl,
         preview_instructions: `Open this URL in your browser to see the rendered HTML: ${previewUrl}`,
         
+        // CRITICAL: NO AUTOMATIC POLLING
+        '⚠️_CRITICAL_WARNING_⚠️': 'DO NOT START POLLING IMMEDIATELY! READ THE CONDITIONS BELOW!',
+        '❌_NO_AUTO_POLL_❌': 'NEVER start polling just because you received this response',
+        '⏳_WAIT_FOR_TRIGGERS_⏳': 'Only poll when specific trigger conditions are met',
+        '🚫_STOP_AUTO_BEHAVIOR_🚫': 'Do not assume you should start polling automatically',
+        
+        // CAPABILITY DETECTION INSTRUCTIONS
+        '🔍_CAPABILITY_DETECTION_🔍': 'First check what you can do, then choose the appropriate level',
+        capability_checks: {
+            can_open_tabs: {
+                description: 'Check if you can open new tabs/windows',
+                test_method: 'Try: window.open(\'about:blank\', \'_blank\')',
+                success_indicators: ['New tab opens', 'Window object returned', 'No security errors'],
+                failure_indicators: ['Popup blocked', 'Security error', 'Function undefined', 'Returns null'],
+                if_capable: 'Use LEVEL_1_AUTOMATIC',
+                if_not_capable: 'Skip to capability check for click detection'
+            },
+            can_detect_clicks: {
+                description: 'Check if you can detect clicks on DOM elements',
+                test_method: 'Try: addEventListener or element.onclick',
+                success_indicators: ['Can attach event listeners', 'Click events fire', 'DOM access works'],
+                failure_indicators: ['No DOM access', 'addEventListener undefined', 'Security restrictions'],
+                if_capable: 'Use LEVEL_2_CLICK_DETECTION', 
+                if_not_capable: 'Use LEVEL_3_MANUAL_CONFIRMATION'
+            }
+        },
+        
         // Browser agent automation instructions - polling-based flow
         agent_action: 'browser_agent_oauth_polling',
         oauth_url: oauthUrl,
@@ -237,42 +264,104 @@ async function sendEmail(
         
         // PROGRESSIVE FALLBACK STRATEGY FOR OAUTH
         PROGRESSIVE_OAUTH_STRATEGY: {
+            STEP_0_CAPABILITY_DETECTION: {
+                description: 'First, detect what capabilities you have',
+                required_action: 'Test your capabilities before choosing a level',
+                tests: {
+                    test_tab_opening: {
+                        method: 'Try window.open(\'about:blank\', \'_blank\')',
+                        success_criteria: 'Returns window object and new tab opens',
+                        if_success: 'You can use LEVEL_1_AUTOMATIC',
+                        if_failure: 'Cannot open tabs, test click detection next'
+                    },
+                    test_click_detection: {
+                        method: 'Try document.addEventListener or element.onclick',
+                        success_criteria: 'Can attach event listeners without errors', 
+                        if_success: 'You can use LEVEL_2_CLICK_DETECTION',
+                        if_failure: 'No click detection, must use LEVEL_3_MANUAL_CONFIRMATION'
+                    }
+                }
+            },
             LEVEL_1_AUTOMATIC: {
                 method: 'redirect_and_poll',
-                description: 'Try to redirect to authorize endpoint in new tab and start polling immediately',
-                action: 'window.open(oauth_url, \'_blank\'); immediately_start_polling()',
-                user_message: 'Opening authorization in new tab - I\'m already watching for completion!',
-                immediate_polling: true,
-                fallback_on_failure: 'LEVEL_2_CLICK_DETECTION'
+                description: 'Use if you can open new tabs',
+                prerequisite: 'Capability check: can_open_tabs = true',
+                action: 'window.open(oauth_url, \'_blank\')',
+                user_message: 'I can open new tabs! Opening authorization now...',
+                CRITICAL_CONDITION: 'ONLY start polling IF window.open() succeeds AND new tab actually opens',
+                polling_trigger: 'SUCCESS: New tab opened automatically',
+                fallback_on_failure: 'LEVEL_2_CLICK_DETECTION',
+                DO_NOT_POLL_UNLESS: 'You have confirmed that a new tab opened successfully'
             },
             LEVEL_2_CLICK_DETECTION: {
                 method: 'detect_click_and_poll', 
-                description: 'If automatic redirect not possible, detect user click on authorize link and start polling',
+                description: 'Use if you can detect clicks but not open tabs',
+                prerequisite: 'Capability check: can_detect_clicks = true',
                 action: 'addEventListener(\'click\', start_polling_on_auth_link_click)',
-                user_message: 'Click the link below - I\'ll start watching for completion as soon as you click!',
-                click_detection: true,
-                fallback_on_failure: 'LEVEL_3_MANUAL_CONFIRMATION'
+                user_message: 'I can detect clicks! Click the link below and I\'ll know immediately!',
+                CRITICAL_CONDITION: 'ONLY start polling WHEN user actually clicks the authorization link',
+                polling_trigger: 'USER_CLICKED: Authorization link was clicked',
+                fallback_on_failure: 'LEVEL_3_MANUAL_CONFIRMATION',
+                DO_NOT_POLL_UNLESS: 'You have detected an actual click on the authorization link'
             },
             LEVEL_3_MANUAL_CONFIRMATION: {
                 method: 'manual_confirmation_then_poll',
-                description: 'If click detection not possible, show link and wait for user to confirm they clicked, then poll',
-                user_message: 'Click the authorization link, then let me know when you\'ve completed the authorization so I can check for the result.',
-                wait_for_confirmation: true,
-                poll_after_confirmation: true
+                description: 'Use if you cannot open tabs or detect clicks',
+                prerequisite: 'No special capabilities available',
+                user_message: 'I need you to tell me when you\'ve completed authorization. Click the link, then say \'I completed the authorization\'.',
+                CRITICAL_CONDITION: 'ONLY start polling AFTER user explicitly confirms they completed authorization',
+                polling_trigger: 'USER_CONFIRMED: User said they completed authorization',
+                DO_NOT_POLL_UNLESS: 'User has explicitly told you they completed the authorization process',
+                wait_for_explicit_confirmation: true
             }
         },
         
-        // AGENT IMPLEMENTATION INSTRUCTIONS
+        // CRITICAL AGENT IMPLEMENTATION INSTRUCTIONS
         AGENT_MUST_DO: {
             DISPLAY_AS_BUTTON: `Display the OAuth URL as a nice button, not just a link: ${oauthUrl}`,
-            PROGRESSIVE_STRATEGY: 'Try Level 1 (auto redirect+poll), if not possible try Level 2 (click detect+poll), if not possible use Level 3 (manual confirm+poll)',
             DO_NOT_HIDE_LINK: 'DO NOT hide the OAuth link in reasoning - show it prominently in your response',
-            TRY_AUTOMATIC_FIRST: 'First try to open oauth_url in new tab and start polling immediately',
-            FALLBACK_TO_DETECTION: 'If automatic doesn\'t work, try to detect clicks on the auth link and start polling on click',
-            FINAL_FALLBACK_MANUAL: 'Only if neither automatic nor detection work, ask user to confirm they clicked then poll',
+            
+            // CRITICAL: NO POLLING BY DEFAULT
+            NO_POLLING_BY_DEFAULT: 'DO NOT start polling immediately upon receiving this response',
+            WAIT_FOR_CONDITIONS: 'Only start polling when specific conditions are met for each level',
+            
+            // SMART IMPLEMENTATION STRATEGY
+            IMPLEMENTATION_FLOW: {
+                STEP_0_DETECT_CAPABILITIES: {
+                    action: 'First, test what you can do',
+                    tab_test: 'Try: const testWindow = window.open(\'about:blank\', \'_blank\'); testWindow?.close();',
+                    click_test: 'Try: document.addEventListener(\'test\', () => {})',
+                    choose_level_based_on_results: 'Pick the highest level you\'re capable of'
+                },
+                IF_CAN_OPEN_TABS: {
+                    use_level: 'LEVEL_1_AUTOMATIC',
+                    action: 'Open oauth_url in new tab and start polling immediately',
+                    condition_for_polling: 'ONLY poll IF new tab actually opens successfully',
+                    user_message: 'I can open tabs! Opening authorization now...'
+                },
+                IF_CAN_DETECT_CLICKS_ONLY: {
+                    use_level: 'LEVEL_2_CLICK_DETECTION',
+                    action: 'Show link and detect when user clicks it', 
+                    condition_for_polling: 'ONLY poll WHEN you detect an actual click on the authorization link',
+                    user_message: 'I can detect clicks! Click the link and I\'ll know immediately!'
+                },
+                IF_NO_SPECIAL_CAPABILITIES: {
+                    use_level: 'LEVEL_3_MANUAL_CONFIRMATION',
+                    action: 'Show link and wait for user to tell you they completed authorization',
+                    condition_for_polling: 'ONLY poll AFTER user explicitly says they completed authorization',
+                    user_message: 'I need your help - please tell me when you\'ve completed authorization'
+                }
+            },
+            
+            // Polling specifications
             POLL_WITH_BACKOFF: 'Poll for 60 seconds with exponential backoff (1s, 2s, 4s, 8s intervals)',
             RANDOMIZE_POLLS: 'Add different parameters to each poll call (attempt number, timestamp) to avoid identical calls error',
-            IMPLEMENTATION_ORDER: '1. Try window.open() + immediate poll, 2. Try click detection + poll on click, 3. Manual confirmation + poll'
+            
+            // ABSOLUTE REQUIREMENTS
+            NEVER_POLL_WITHOUT_TRIGGER: 'Never start polling without a specific trigger condition being met',
+            EXPLICIT_USER_FEEDBACK: 'Always tell user which level you\'re using and what condition you\'re waiting for',
+            CAPABILITY_FIRST: 'Always test your capabilities first, then choose the appropriate level',
+            INFORM_USER_OF_CAPABILITIES: 'Tell user what you can and cannot do (tab opening, click detection)'
         },
         
         // Automated flow for browser agents:
@@ -287,24 +376,34 @@ async function sendEmail(
                 description: 'Try progressive OAuth fallback strategy',
                 button_text: 'Authorize Gmail Access', 
                 button_url: oauthUrl,
+                CRITICAL_RULE: 'DO NOT START POLLING until specific conditions are met',
+                SMART_SELECTION: 'Test your capabilities first, then choose the best level available',
                 strategy: {
                     level_1: {
                         method: 'automatic_redirect_and_poll',
-                        action: 'Try to open oauth_url in new tab and immediately start polling',
-                        immediate_polling: true,
-                        user_message: 'Opening authorization in new tab - I\'m already watching for completion!'
+                        action: 'Try window.open(oauth_url, \'_blank\')',
+                        POLLING_CONDITION: 'ONLY if window.open() succeeds AND new tab opens',
+                        user_message: 'Attempting to open authorization in new tab...',
+                        DO_NOT_POLL_IF: 'New tab fails to open or is blocked',
+                        success_message: 'New tab opened! Now I\'ll start watching for completion.',
+                        failure_message: 'Can\'t open new tab automatically. Let\'s try click detection...'
                     },
                     level_2: {
                         method: 'click_detection_and_poll',
-                        action: 'If level 1 fails, detect clicks on auth link and start polling on click',
-                        click_triggered_polling: true,
-                        user_message: 'Click the link below - I\'ll start watching for completion as soon as you click!'
+                        action: 'Detect when user clicks the authorization link',
+                        POLLING_CONDITION: 'ONLY when you detect user actually clicked the link',
+                        user_message: 'Click the link below - I\'ll detect your click and start watching!',
+                        DO_NOT_POLL_IF: 'User hasn\'t clicked the link yet',
+                        success_message: 'I detected your click! Now watching for completion.',
+                        failure_message: 'Can\'t detect clicks. Let\'s use manual confirmation...'
                     },
                     level_3: {
                         method: 'manual_confirmation_and_poll', 
-                        action: 'If level 2 fails, wait for user confirmation then poll',
-                        user_action_required: true,
-                        user_message: 'Click the authorization link, then let me know when you\'ve completed the authorization so I can check for the result.'
+                        action: 'Wait for user to explicitly confirm they completed authorization',
+                        POLLING_CONDITION: 'ONLY after user says they completed authorization',
+                        user_message: 'Click the authorization link, then tell me \'I completed the authorization\'',
+                        DO_NOT_POLL_IF: 'User hasn\'t said they completed authorization',
+                        wait_for_phrases: ['I completed the authorization', 'I\'m done', 'authorization complete', 'I finished']
                     }
                 }
             },
