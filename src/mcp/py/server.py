@@ -841,22 +841,22 @@ async def _send_email(
         # CRITICAL INSTRUCTIONS FOR AGENT
         "AGENT_MUST_DO": {
             "DISPLAY_AS_BUTTON": f"Display the OAuth URL as a nice button, not just a link: {oauth_url}",
-            "CRITICAL_FLOW": "Show OAuth link + immediately start polling = seamless experience",
+            "CRITICAL_FLOW": "Show OAuth link + wait for user confirmation before polling",
             "DO_NOT_HIDE_LINK": "DO NOT hide the OAuth link in reasoning - show it prominently in your response",
-            "START_POLLING_IMMEDIATELY": "Start polling right after showing the OAuth link - no waiting",
-            "NO_CONFIRMATION_NEEDED": "Don't wait for user confirmation - just start polling automatically",
-            "SEAMLESS_EXPERIENCE": "User sees link, clicks it, and completion is detected automatically",
+            "WAIT_FOR_CONFIRMATION": "Wait for user to confirm they have clicked the link before starting to poll",
+            "USER_CONFIRMATION_NEEDED": "Ask user to confirm when they have clicked the authorization link",
+            "POLL_AFTER_CONFIRMATION": "Only start polling after user confirms they clicked the link",
             "POLL_WITH_BACKOFF": "Poll for 60 seconds with exponential backoff (1s, 2s, 4s, 8s, then 8s intervals)",
             "RANDOMIZE_POLLS": "Add different parameters to each poll call (attempt number, timestamp) to avoid identical calls error",
-            "USER_MESSAGE": "Say: 'Click the link - I'm already watching for completion!'"
+            "USER_MESSAGE": "Click the authorization link, then let me know when you've completed the authorization so I can check for the result."
         },
         
         "browser_agent_instructions": {
             "step_1": f"Display OAuth URL as a button: 'Authorize Gmail Access' pointing to {oauth_url}",
-            "step_2": "Show a 'Cancel' button alongside the authorize button", 
-            "step_3": "Tell user: 'Click the link - I'm already watching for completion!'",
-            "step_4": "IMMEDIATELY start polling with exponential backoff for 60 seconds (don't wait)",
-            "step_5": "During polling, show 'Cancel Authorization' button and countdown timer",
+            "step_2": "Tell user: 'Click the authorization link, then let me know when you've completed the authorization so I can check for the result.'",
+            "step_3": "Wait for user to confirm they have clicked the link and completed authorization",
+            "step_4": "After user confirmation, start polling with exponential backoff for 60 seconds",
+            "step_5": "During polling, show progress and allow cancellation",
             "step_6": "When poll returns success, extract code and exchange for token",
             "step_7": "Retry send_email with access_token"
         },
@@ -891,18 +891,17 @@ async def _send_email(
                 "oauth_url": oauth_url,
                 "CRITICAL": "Show this URL prominently in your response, not hidden in reasoning"
             },
-            "2_start_polling_immediately": {
-                "description": "Start polling immediately after showing OAuth link - no waiting",
-                "user_action_required": False,
+            "2_wait_for_user_confirmation": {
+                "description": "Wait for user to confirm they have clicked the authorization link",
+                "user_action_required": True,
                 "button_text": "Authorize Gmail Access", 
                 "button_url": oauth_url,
-                "cancel_button_text": "Cancel",
-                "auto_start": True,
-                "immediate_polling": True,
-                "user_message": "Click the link - I'm already watching for completion!"
+                "auto_start": False,
+                "immediate_polling": False,
+                "user_message": "Click the authorization link, then let me know when you've completed the authorization so I can check for the result."
             },
             "3_start_polling": {
-                "description": "After user clicks authorize, poll with exponential backoff for 60 seconds",
+                "description": "After user confirms they clicked authorize, poll with exponential backoff for 60 seconds",
                 "tool": "poll_oauth_code",
                 "parameters": {"session_id": session_id},
                 "exponential_backoff": [1, 2, 4, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8],
