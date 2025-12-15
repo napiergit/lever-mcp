@@ -235,17 +235,158 @@ async function sendEmail(
         automation_available: true,
         action: 'browser_agent_polling',
         
-        // CRITICAL INSTRUCTIONS FOR AGENT
+        // PROGRESSIVE FALLBACK STRATEGY FOR OAUTH
+        PROGRESSIVE_OAUTH_STRATEGY: {
+            LEVEL_1_AUTOMATIC: {
+                method: 'redirect_and_poll',
+                description: 'Try to redirect to authorize endpoint in new tab and start polling immediately',
+                action: 'window.open(oauth_url, \'_blank\'); immediately_start_polling()',
+                user_message: 'Opening authorization in new tab - I\'m already watching for completion!',
+                immediate_polling: true,
+                fallback_on_failure: 'LEVEL_2_CLICK_DETECTION'
+            },
+            LEVEL_2_CLICK_DETECTION: {
+                method: 'detect_click_and_poll', 
+                description: 'If automatic redirect not possible, detect user click on authorize link and start polling',
+                action: 'addEventListener(\'click\', start_polling_on_auth_link_click)',
+                user_message: 'Click the link below - I\'ll start watching for completion as soon as you click!',
+                click_detection: true,
+                fallback_on_failure: 'LEVEL_3_MANUAL_CONFIRMATION'
+            },
+            LEVEL_3_MANUAL_CONFIRMATION: {
+                method: 'manual_confirmation_then_poll',
+                description: 'If click detection not possible, show link and wait for user to confirm they clicked, then poll',
+                user_message: 'Click the authorization link, then let me know when you\'ve completed the authorization so I can check for the result.',
+                wait_for_confirmation: true,
+                poll_after_confirmation: true
+            }
+        },
+        
+        // AGENT IMPLEMENTATION INSTRUCTIONS
         AGENT_MUST_DO: {
             DISPLAY_AS_BUTTON: `Display the OAuth URL as a nice button, not just a link: ${oauthUrl}`,
-            CRITICAL_FLOW: 'Show OAuth link + immediately start polling = seamless experience',
+            PROGRESSIVE_STRATEGY: 'Try Level 1 (auto redirect+poll), if not possible try Level 2 (click detect+poll), if not possible use Level 3 (manual confirm+poll)',
             DO_NOT_HIDE_LINK: 'DO NOT hide the OAuth link in reasoning - show it prominently in your response',
-            START_POLLING_IMMEDIATELY: 'Start polling right after showing the OAuth link - no waiting',
-            NO_CONFIRMATION_NEEDED: "Don't wait for user confirmation - just start polling automatically",
-            SEAMLESS_EXPERIENCE: 'User sees link, clicks it, and completion is detected automatically',
-            POLL_WITH_BACKOFF: 'Poll for 60 seconds with exponential backoff (1s, 2s, 4s, 8s, then 8s intervals)',
+            TRY_AUTOMATIC_FIRST: 'First try to open oauth_url in new tab and start polling immediately',
+            FALLBACK_TO_DETECTION: 'If automatic doesn\'t work, try to detect clicks on the auth link and start polling on click',
+            FINAL_FALLBACK_MANUAL: 'Only if neither automatic nor detection work, ask user to confirm they clicked then poll',
+            POLL_WITH_BACKOFF: 'Poll for 60 seconds with exponential backoff (1s, 2s, 4s, 8s intervals)',
             RANDOMIZE_POLLS: 'Add different parameters to each poll call (attempt number, timestamp) to avoid identical calls error',
-            USER_MESSAGE: "Say: 'Click the link - I'm already watching for completion!'"
+            IMPLEMENTATION_ORDER: '1. Try window.open() + immediate poll, 2. Try click detection + poll on click, 3. Manual confirmation + poll'
+        },
+        
+        // Automated flow for browser agents:
+        automated_flow: {
+            '1_present_link': {
+                description: 'PROMINENTLY display OAuth link to user - do NOT hide in reasoning',
+                user_message: `🔗 CLICK THIS LINK TO AUTHORIZE GMAIL: ${oauthUrl}`,
+                oauth_url: oauthUrl,
+                CRITICAL: 'Show this URL prominently in your response, not hidden in reasoning'
+            },
+            '2_try_progressive_auth': {
+                description: 'Try progressive OAuth fallback strategy',
+                button_text: 'Authorize Gmail Access', 
+                button_url: oauthUrl,
+                strategy: {
+                    level_1: {
+                        method: 'automatic_redirect_and_poll',
+                        action: 'Try to open oauth_url in new tab and immediately start polling',
+                        immediate_polling: true,
+                        user_message: 'Opening authorization in new tab - I\'m already watching for completion!'
+                    },
+                    level_2: {
+                        method: 'click_detection_and_poll',
+                        action: 'If level 1 fails, detect clicks on auth link and start polling on click',
+                        click_triggered_polling: true,
+                        user_message: 'Click the link below - I\'ll start watching for completion as soon as you click!'
+                    },
+                    level_3: {
+                        method: 'manual_confirmation_and_poll', 
+                        action: 'If level 2 fails, wait for user confirmation then poll',
+                        user_action_required: true,
+                        user_message: 'Click the authorization link, then let me know when you\'ve completed the authorization so I can check for the result.'
+                    }
+                }
+            },
+            '3_start_polling': {
+                description: 'Poll with exponential backoff for 60 seconds based on selected strategy',
+                tool: 'poll_oauth_code',
+                parameters: { session_id: sessionId },
+                exponential_backoff: [1, 2, 4, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8],
+                max_duration_seconds: 60,
+                randomization: {
+                    add_random_string: 'To avoid identical tool calls, add a random string to each poll call',
+                    example: 'Add timestamp or counter: poll_oauth_code(session_id="abc", attempt=1, timestamp="...")',
+                    purpose: 'Prevents "too many identical tool calls" error'
+                },
+                user_feedback: {
+                    show_timer: true,
+                    show_cancel_button: true,
+                    cancel_button_text: 'Cancel Authorization'
+                },
+                CRITICAL: 'Use exponential backoff delays, show countdown, cancel option, and randomize each call'
+            },
+            '4_exchange_token': {
+                description: 'Exchange code for access token',
+                tool: 'exchange_oauth_code',
+                parameters: { code: '<from_polling>', user_id: userId }
+            },
+            '5_retry_send': {
+                description: 'Resend email with token',
+                tool: 'send_email',
+                parameters: {
+                    to,
+                    theme,
+                    subject: emailSubject,
+                    cc,
+                    bcc,
+                    access_token: '<from_token_exchange>',
+                    user_id: userId
+                }
+            }
+        },
+        
+        // Alternative tools available
+        alternative_tools: {
+            browser_agent_oauth: 'get_browser_agent_oauth_url',
+            polling: 'poll_oauth_code',
+            token_exchange: 'exchange_oauth_code'
+        },
+        
+        // Manual fallback (if automation fails)
+        manual_instructions: {
+            step_1: `Show user this URL prominently: ${oauthUrl}`,
+            step_2: 'User clicks OAuth URL and completes authorization', 
+            step_3: 'Agent continuously polls poll_oauth_code tool every 2 seconds for 30 seconds',
+            step_4: 'Agent exchanges code using exchange_oauth_code tool',
+            step_5: 'Agent retries send_email with access_token'
+        },
+        
+        // Clear user-facing message and UI instructions for the agent
+        USER_INTERFACE_INSTRUCTIONS: {
+            initial_message: 'I need Gmail authorization to send this email. Click the link below - I\'m already watching for completion!',
+            authorize_button: {
+                text: '🔗 Authorize Gmail Access',
+                url: oauthUrl,
+                style: 'primary',
+                description: 'Opens in new tab - CLICK THIS FIRST'
+            },
+            cancel_button: {
+                text: '❌ Cancel',
+                action: 'cancel_email',
+                style: 'secondary'
+            },
+            auto_polling_active: 'I\'m automatically checking for authorization completion - just click the link above!',
+            waiting_message: '🔄 Watching for authorization completion... Click the link above if you haven\'t already!',
+            polling_message: 'Authorization in progress... ({{countdown}} seconds remaining)',
+            cancel_polling_button: {
+                text: '❌ Cancel Authorization',
+                action: 'stop_polling',
+                style: 'danger'
+            },
+            success_message: '✅ Authorization successful! Sending email now...',
+            timeout_message: '⏱️ Authorization timed out. Please try again.',
+            cancelled_message: '❌ Authorization cancelled.'
         },
         
         gmail_api_payload: gmailPayload,
