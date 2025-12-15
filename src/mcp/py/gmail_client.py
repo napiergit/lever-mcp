@@ -9,7 +9,11 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from .oauth_config import oauth_config, GMAIL_SCOPES
+# Import with fallback for cloud deployment
+try:
+    from .oauth_config import oauth_config, GMAIL_SCOPES
+except ImportError:
+    from oauth_config import oauth_config, GMAIL_SCOPES
 
 logger = logging.getLogger(__name__)
 
