@@ -13,4 +13,4 @@ fi
 # Run the MCP server
 export PYTHONPATH=$PYTHONPATH:$(pwd)/src
 # Use the fastmcp executable from the venv
-./.venv/bin/fastmcp run src/lever_mcp/server.py:mcp
+./.venv/bin/fastmcp run src/server.py:mcp

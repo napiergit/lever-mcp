@@ -1,8 +1,0 @@
-# Local TypeScript development files
-node_modules/
-*.log
-.env
-.env.local
-
-# Keep dist/ for FastMCP cloud deployment
-# dist/  <- commented out so dist is committed

@@ -7,4 +7,4 @@ fi
 # Run the MCP server in SSE mode
 export PYTHONPATH=$PYTHONPATH:$(pwd)/src
 # Use the fastmcp executable from the venv
-./.venv/bin/fastmcp run src/lever_mcp/server.py:mcp --transport sse --port 8005
+./.venv/bin/fastmcp run src/server.py:mcp --transport sse --port 8005
