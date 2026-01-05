@@ -29,5 +29,5 @@ fi
 
 # Run the Python server
 echo "Running Python MCP server..."
-cd src
+cd src/mcp/py
 python -m server

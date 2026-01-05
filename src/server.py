@@ -14,11 +14,13 @@ try:
     from .client import LeverClient
     from .gmail_client import GmailClient  
     from .oauth_config import oauth_config, GMAIL_SCOPES
+    from .client_registry import client_registry
 except ImportError:
     # Fallback for cloud deployment
     from client import LeverClient
     from gmail_client import GmailClient
     from oauth_config import oauth_config, GMAIL_SCOPES
+    from client_registry import client_registry
 from typing import Optional, Dict, Any
 from starlette.responses import JSONResponse, RedirectResponse, HTMLResponse
 from starlette.requests import Request
@@ -297,14 +299,38 @@ if auth_provider:
         
         # Store code for browser agent polling if this looks like a browser agent session
         session_id = None
-        if state and state.startswith('browser_agent_'):
-            session_id = state.replace('browser_agent_', '')
-            oauth_sessions[session_id] = {
-                "code": code,
-                "timestamp": datetime.now(),
-                "state": state
-            }
-            logger.info(f"Stored OAuth code for browser agent session: {session_id}")
+        dynamic_client_info = None
+        
+        # Parse state to determine client type and session info
+        if state:
+            if state.startswith('browser_agent_'):
+                session_id = state.replace('browser_agent_', '')
+                oauth_sessions[session_id] = {
+                    "code": code,
+                    "timestamp": datetime.now(),
+                    "state": state
+                }
+                logger.info(f"Stored OAuth code for browser agent session: {session_id}")
+            elif state.startswith('dcr_'):
+                # Dynamic client registration flow
+                try:
+                    state_json = base64.urlsafe_b64decode(state[4:]).decode()
+                    dynamic_client_info = json.loads(state_json)
+                    logger.info(f"Dynamic client callback: {dynamic_client_info.get('client_id')}")
+                except Exception as e:
+                    logger.error(f"Error parsing dynamic client state: {e}")
+                    
+                # Also check if it's a browser agent session for a dynamic client
+                original_state = dynamic_client_info.get('original_state', '') if dynamic_client_info else ''
+                if original_state.startswith('browser_agent_'):
+                    session_id = original_state.replace('browser_agent_', '')
+                    oauth_sessions[session_id] = {
+                        "code": code,
+                        "timestamp": datetime.now(),
+                        "state": state,
+                        "dynamic_client": dynamic_client_info
+                    }
+                    logger.info(f"Stored OAuth code for dynamic client browser agent session: {session_id}")
         
         # Return success page that closes popup and sends code to parent
         return HTMLResponse(f"""
@@ -429,20 +455,77 @@ if auth_provider:
         # Build Google OAuth URL
         from urllib.parse import urlencode
         
+        client_id = request.query_params.get("client_id")
+        redirect_uri = request.query_params.get("redirect_uri")
+        
+        # Determine which client to use (static or dynamic)
+        if client_id:
+            # Dynamic client flow - validate the client
+            dynamic_client = client_registry.get_client(client_id)
+            if not dynamic_client:
+                return JSONResponse({
+                    "error": "invalid_client",
+                    "error_description": f"Client not found: {client_id}"
+                }, status_code=400)
+            
+            if dynamic_client.get("status") != "active":
+                return JSONResponse({
+                    "error": "invalid_client", 
+                    "error_description": "Client is inactive"
+                }, status_code=400)
+            
+            # Validate redirect_uri
+            if redirect_uri not in dynamic_client.get("redirect_uris", []):
+                return JSONResponse({
+                    "error": "invalid_request",
+                    "error_description": "Invalid redirect_uri for this client"
+                }, status_code=400)
+            
+            # Use dynamic client's configuration
+            google_client_id = oauth_config.client_id  # Still use our Google app for upstream
+            final_redirect_uri = oauth_config.redirect_uri  # Use our callback handler
+            
+            logger.info(f"Dynamic client authorization: {dynamic_client.get('client_name', client_id)}")
+            
+        else:
+            # Static client flow (backward compatibility)
+            if not oauth_config.is_configured():
+                return JSONResponse({
+                    "error": "server_error",
+                    "error_description": "OAuth not configured"
+                }, status_code=500)
+            
+            google_client_id = oauth_config.client_id
+            final_redirect_uri = oauth_config.redirect_uri
+            
+            logger.info("Static client authorization (legacy flow)")
+        
         # Log what scopes we're requesting
         requested_scopes = " ".join(GMAIL_SCOPES)
         logger.info(f"Authorization requested. Scopes: {requested_scopes}")
         logger.info(f"State: {request.query_params.get('state', 'none')}")
         
+        # Store original client info in state for callback
+        state = request.query_params.get("state", "")
+        if client_id and redirect_uri:
+            # Encode client info in state for dynamic clients
+            import urllib.parse
+            state_data = {
+                "original_state": state,
+                "client_id": client_id,
+                "redirect_uri": redirect_uri
+            }
+            state = f"dcr_{base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode()}"
+        
         params = {
-            "client_id": oauth_config.client_id,
-            "redirect_uri": oauth_config.redirect_uri,
+            "client_id": google_client_id,
+            "redirect_uri": final_redirect_uri,
             "response_type": "code",
             "scope": requested_scopes,
             "access_type": "offline",
             "prompt": "consent",
             "include_granted_scopes": "false",  # Explicitly disable incremental auth
-            "state": request.query_params.get("state", "")
+            "state": state
         }
         
         auth_url = f"https://accounts.google.com/o/oauth2/auth?{urlencode(params)}"
@@ -457,8 +540,12 @@ if auth_provider:
         
         form_data = await request.form()
         code = form_data.get("code")
+        grant_type = form_data.get("grant_type")
+        client_id = form_data.get("client_id")
+        client_secret = form_data.get("client_secret")
+        redirect_uri = form_data.get("redirect_uri")
         
-        logger.info(f"Token exchange requested with code: {code[:20] if code else 'None'}...")
+        logger.info(f"Token exchange requested. Grant type: {grant_type}, Client ID: {client_id}")
         
         if not code:
             return JSONResponse({
@@ -466,15 +553,67 @@ if auth_provider:
                 "error_description": "Missing authorization code"
             }, status_code=400)
         
-        # Exchange code for token with Google - no scope validation
+        if not grant_type or grant_type != "authorization_code":
+            return JSONResponse({
+                "error": "unsupported_grant_type",
+                "error_description": "Only authorization_code grant type is supported"
+            }, status_code=400)
+        
+        # Authenticate client (dynamic or static)
+        dynamic_client = None
+        if client_id:
+            # Dynamic client authentication
+            if not client_secret:
+                return JSONResponse({
+                    "error": "invalid_client",
+                    "error_description": "Client authentication required"
+                }, status_code=401)
+            
+            # Verify dynamic client credentials
+            if not client_registry.authenticate_client(client_id, client_secret):
+                return JSONResponse({
+                    "error": "invalid_client",
+                    "error_description": "Client authentication failed"
+                }, status_code=401)
+            
+            dynamic_client = client_registry.get_client(client_id)
+            if not dynamic_client:
+                return JSONResponse({
+                    "error": "invalid_client",
+                    "error_description": "Client not found"
+                }, status_code=401)
+            
+            # Validate redirect_uri for dynamic clients
+            if redirect_uri not in dynamic_client.get("redirect_uris", []):
+                return JSONResponse({
+                    "error": "invalid_grant",
+                    "error_description": "Invalid redirect_uri for this client"
+                }, status_code=400)
+                
+            logger.info(f"Dynamic client authenticated: {dynamic_client.get('client_name', client_id)}")
+            
+        else:
+            # Static client flow (backward compatibility)
+            if not oauth_config.is_configured():
+                return JSONResponse({
+                    "error": "server_error",
+                    "error_description": "OAuth not configured"
+                }, status_code=500)
+            logger.info("Static client token exchange (legacy flow)")
+        
+        # Exchange code for token with Google
+        google_client_id = oauth_config.client_id  # Always use our upstream Google app
+        google_client_secret = oauth_config.client_secret
+        google_redirect_uri = oauth_config.redirect_uri
+        
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://oauth2.googleapis.com/token",
                 data={
                     "code": code,
-                    "client_id": oauth_config.client_id,
-                    "client_secret": oauth_config.client_secret,
-                    "redirect_uri": oauth_config.redirect_uri,
+                    "client_id": google_client_id,
+                    "client_secret": google_client_secret,
+                    "redirect_uri": google_redirect_uri,
                     "grant_type": "authorization_code"
                 }
             )
@@ -503,23 +642,44 @@ if auth_provider:
                 token_data['_original_scope'] = returned_scopes
                 token_data['_scope_note'] = 'Scope field normalized for MCP compatibility. Original scopes in _original_scope field.'
             
+            # Add client information to token response for dynamic clients
+            if dynamic_client:
+                token_data['_client_id'] = client_id
+                token_data['_client_name'] = dynamic_client.get('client_name')
+            
             # Return the token data with normalized scopes
             return JSONResponse(token_data)
     
     # Add authorization server metadata
     @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
     async def oauth_authorization_server_metadata(request: Request):
-        """OAuth authorization server metadata."""
+        """OAuth authorization server metadata with DCR support."""
         base = str(auth_provider.base_url).rstrip('/')
         return JSONResponse({
             "issuer": base + "/",
             "authorization_endpoint": f"{base}/authorize",
             "token_endpoint": f"{base}/token",
+            "registration_endpoint": f"{base}/clients",  # RFC 7591 DCR endpoint
             # Don't advertise specific scopes - accept whatever Google returns
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
-            "token_endpoint_auth_methods_supported": ["client_secret_post"],
-            "code_challenge_methods_supported": ["S256"]
+            "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "none"],
+            "code_challenge_methods_supported": ["S256"],
+            # Dynamic Client Registration capabilities
+            "registration_endpoint": f"{base}/clients",
+            "registration_endpoint_auth_methods_supported": ["none"],  # Open registration
+            "registration_endpoint_auth_signing_alg_values_supported": [],
+            # Additional DCR metadata
+            "client_id_metadata_supported": True,
+            "client_secret_metadata_supported": True,
+            "registration_access_token_supported": True,
+            "client_registration_types_supported": ["automatic"],
+            # Supported client metadata fields
+            "client_metadata_supported": [
+                "client_name", "client_uri", "logo_uri", "contacts", "tos_uri", "policy_uri",
+                "redirect_uris", "response_types", "grant_types", "application_type", 
+                "token_endpoint_auth_method", "scope", "jwks_uri", "software_id", "software_version"
+            ]
         })
     
     # Add protected resource metadata
@@ -533,6 +693,210 @@ if auth_provider:
             # Don't advertise specific scopes - accept whatever Google returns
             "bearer_methods_supported": ["header"]
         })
+
+# Dynamic Client Registration endpoints (RFC 7591)
+@mcp.custom_route("/clients", methods=["POST"])
+async def register_client(request: Request):
+    """
+    Register a new OAuth client dynamically (RFC 7591).
+    
+    POST /clients
+    Content-Type: application/json
+    
+    {
+        "redirect_uris": ["https://example.com/callback"],
+        "client_name": "My Application", 
+        "client_uri": "https://example.com",
+        "response_types": ["code"],
+        "grant_types": ["authorization_code"],
+        "scope": "https://www.googleapis.com/auth/gmail.send",
+        ...
+    }
+    """
+    try:
+        # Parse registration request
+        registration_data = await request.json()
+        logger.info(f"Dynamic client registration request: {registration_data.get('client_name', 'unnamed')}")
+        
+        # Register the client
+        response_data = client_registry.register_client(registration_data)
+        
+        logger.info(f"Client registered: {response_data['client_id']}")
+        return JSONResponse(response_data, status_code=201)
+        
+    except ValueError as e:
+        logger.error(f"Invalid client registration request: {e}")
+        return JSONResponse({
+            "error": "invalid_client_metadata",
+            "error_description": str(e)
+        }, status_code=400)
+    except Exception as e:
+        logger.error(f"Client registration error: {e}")
+        return JSONResponse({
+            "error": "server_error", 
+            "error_description": "Internal server error during client registration"
+        }, status_code=500)
+
+@mcp.custom_route("/clients/{client_id}", methods=["GET"])
+async def get_client(request: Request):
+    """
+    Get client information (RFC 7591).
+    Requires registration access token in Authorization header.
+    """
+    client_id = request.path_params["client_id"]
+    
+    try:
+        # Check authorization header
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return JSONResponse({
+                "error": "invalid_token",
+                "error_description": "Registration access token required"
+            }, status_code=401)
+        
+        registration_token = auth_header.split(" ", 1)[1]
+        
+        # Get client data
+        client_data = client_registry.get_client(client_id)
+        if not client_data:
+            return JSONResponse({
+                "error": "invalid_client", 
+                "error_description": "Client not found"
+            }, status_code=404)
+        
+        # Verify registration access token
+        from .client_registry import ClientRegistry
+        temp_registry = ClientRegistry()
+        try:
+            # This will raise PermissionError if token is invalid
+            temp_registry.update_client(client_id, registration_token, client_data)
+        except PermissionError:
+            return JSONResponse({
+                "error": "invalid_token",
+                "error_description": "Invalid registration access token"
+            }, status_code=403)
+        
+        return JSONResponse(client_data)
+        
+    except Exception as e:
+        logger.error(f"Error retrieving client {client_id}: {e}")
+        return JSONResponse({
+            "error": "server_error",
+            "error_description": "Internal server error"
+        }, status_code=500)
+
+@mcp.custom_route("/clients/{client_id}", methods=["PUT"])
+async def update_client(request: Request):
+    """
+    Update client registration (RFC 7591).
+    Requires registration access token in Authorization header.
+    """
+    client_id = request.path_params["client_id"]
+    
+    try:
+        # Check authorization header
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return JSONResponse({
+                "error": "invalid_token",
+                "error_description": "Registration access token required"
+            }, status_code=401)
+        
+        registration_token = auth_header.split(" ", 1)[1]
+        
+        # Parse update request
+        update_data = await request.json()
+        
+        # Update client
+        response_data = client_registry.update_client(client_id, registration_token, update_data)
+        
+        logger.info(f"Client updated: {client_id}")
+        return JSONResponse(response_data)
+        
+    except ValueError as e:
+        logger.error(f"Invalid client update request: {e}")
+        return JSONResponse({
+            "error": "invalid_client_metadata",
+            "error_description": str(e)
+        }, status_code=400)
+    except PermissionError as e:
+        return JSONResponse({
+            "error": "invalid_token",
+            "error_description": "Invalid registration access token"
+        }, status_code=403)
+    except Exception as e:
+        logger.error(f"Error updating client {client_id}: {e}")
+        return JSONResponse({
+            "error": "server_error",
+            "error_description": "Internal server error"
+        }, status_code=500)
+
+@mcp.custom_route("/clients/{client_id}", methods=["DELETE"])
+async def delete_client(request: Request):
+    """
+    Delete/deactivate client registration (RFC 7591).
+    Requires registration access token in Authorization header.
+    """
+    client_id = request.path_params["client_id"]
+    
+    try:
+        # Check authorization header
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return JSONResponse({
+                "error": "invalid_token",
+                "error_description": "Registration access token required"
+            }, status_code=401)
+        
+        registration_token = auth_header.split(" ", 1)[1]
+        
+        # Delete client
+        success = client_registry.delete_client(client_id, registration_token)
+        
+        if success:
+            logger.info(f"Client deactivated: {client_id}")
+            return JSONResponse({"message": "Client deactivated successfully"}, status_code=204)
+        else:
+            return JSONResponse({
+                "error": "invalid_client",
+                "error_description": "Client not found"
+            }, status_code=404)
+        
+    except PermissionError as e:
+        return JSONResponse({
+            "error": "invalid_token",
+            "error_description": "Invalid registration access token"
+        }, status_code=403)
+    except Exception as e:
+        logger.error(f"Error deleting client {client_id}: {e}")
+        return JSONResponse({
+            "error": "server_error",
+            "error_description": "Internal server error"
+        }, status_code=500)
+
+# Administrative endpoints for client management
+@mcp.custom_route("/admin/clients", methods=["GET"])
+async def list_clients(request: Request):
+    """
+    List all registered clients (administrative endpoint).
+    This is not part of RFC 7591 but useful for debugging/management.
+    """
+    try:
+        include_inactive = request.query_params.get("include_inactive", "false").lower() == "true"
+        clients = client_registry.list_clients(include_inactive=include_inactive)
+        
+        return JSONResponse({
+            "clients": clients,
+            "total": len(clients),
+            "include_inactive": include_inactive
+        })
+        
+    except Exception as e:
+        logger.error(f"Error listing clients: {e}")
+        return JSONResponse({
+            "error": "server_error",
+            "error_description": "Internal server error"
+        }, status_code=500)
 
 # Add health check endpoint
 @mcp.custom_route("/health", methods=["GET"])
