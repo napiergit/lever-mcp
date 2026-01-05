@@ -1637,5 +1637,9 @@ mcp.tool(name="check_oauth_status")(_check_oauth_status)
 mcp.tool(name="get_browser_agent_oauth_url")(_get_browser_agent_oauth_url)
 mcp.tool(name="poll_oauth_code")(_poll_oauth_code)
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the MCP server."""
     mcp.run()
+
+if __name__ == "__main__":
+    main()
