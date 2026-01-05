@@ -31,6 +31,8 @@ class ClientRegistry:
             storage_path = os.getenv('CLIENT_REGISTRY_PATH', './.client_registry')
         
         self.storage_path = Path(storage_path)
+        self.use_memory_storage = False
+        self.memory_storage = {}  # In-memory fallback storage
         self._ensure_storage_directory()
     
     def _ensure_storage_directory(self) -> None:
@@ -63,22 +65,86 @@ class ClientRegistry:
         return self.storage_path / f"{client_id}.json"
     
     def _save_client_data(self, client_data: Dict[str, Any]) -> None:
-        """Save client data to storage."""
-        try:
-            client_file = self._get_client_file_path(client_data['client_id'])
-            with open(client_file, 'w') as f:
-                json.dump(client_data, f, indent=2, default=str)
-            logger.info(f"Client data saved: {client_data['client_id']}")
-        except (OSError, PermissionError) as e:
-            logger.warning(f"Cannot save client data to filesystem: {e}")
-            # In production/serverless, store in memory or external storage
-            # For now, log the warning but continue
+        """Save client data to storage (filesystem or memory fallback)."""
+        client_id = client_data['client_id']
+        
+        # Try filesystem storage first
+        if not self.use_memory_storage:
+            try:
+                client_file = self._get_client_file_path(client_id)
+                
+                # Ensure parent directory exists
+                client_file.parent.mkdir(parents=True, exist_ok=True)
+                
+                with open(client_file, 'w') as f:
+                    json.dump(client_data, f, indent=2, default=str)
+                
+                # Verify the file was written and is readable
+                if client_file.exists():
+                    test_data = self._load_client_data(client_id)
+                    if test_data and test_data.get('client_id') == client_id:
+                        logger.info(f"Client data saved to filesystem: {client_id}")
+                        return
+                    else:
+                        logger.error(f"Client data verification failed for: {client_id}")
+                        raise OSError("Client data verification failed after save")
+                else:
+                    logger.error(f"Client file was not created: {client_file}")
+                    raise OSError("Client file was not created")
+                    
+            except (OSError, PermissionError) as e:
+                logger.warning(f"Filesystem storage failed for {client_id}: {e}")
+                logger.info("Switching to in-memory storage for this session")
+                self.use_memory_storage = True
+                # Continue to memory storage fallback
+        
+        # Memory storage fallback
+        logger.info(f"Using in-memory storage for client: {client_id}")
+        # Deep copy to avoid reference issues
+        import copy
+        self.memory_storage[client_id] = copy.deepcopy(client_data)
+        logger.info(f"Client data saved to memory: {client_id}")
     
     def _load_client_data(self, client_id: str) -> Optional[Dict[str, Any]]:
-        """Load client data from storage."""
+        """Load client data from storage (filesystem or memory fallback)."""
+        logger.debug(f"Loading client data for: {client_id}")
+        
+        # Check memory storage first if we're in memory mode
+        if self.use_memory_storage:
+            if client_id in self.memory_storage:
+                logger.debug(f"Found client in memory storage: {client_id}")
+                import copy
+                return copy.deepcopy(self.memory_storage[client_id])
+            else:
+                logger.debug(f"Client not found in memory storage: {client_id}")
+                logger.debug(f"Available clients in memory: {list(self.memory_storage.keys())}")
+                return None
+        
+        # Try filesystem storage
         try:
             client_file = self._get_client_file_path(client_id)
+            logger.debug(f"Client file path: {client_file}")
+            
             if not client_file.exists():
+                logger.debug(f"Client file does not exist: {client_file}")
+                
+                # Check memory storage as fallback
+                if client_id in self.memory_storage:
+                    logger.info(f"Found client in memory fallback storage: {client_id}")
+                    import copy
+                    return copy.deepcopy(self.memory_storage[client_id])
+                
+                # List available client files for debugging
+                try:
+                    if self.storage_path.exists():
+                        available_files = list(self.storage_path.glob("dcr_*.json"))
+                        logger.debug(f"Available client files: {[f.name for f in available_files]}")
+                    else:
+                        logger.debug(f"Storage directory does not exist: {self.storage_path}")
+                except Exception as list_error:
+                    logger.debug(f"Could not list client files: {list_error}")
+                
+                logger.debug(f"Available clients in memory: {list(self.memory_storage.keys())}")
                 return None
             
             with open(client_file, 'r') as f:
@@ -86,13 +152,25 @@ class ClientRegistry:
                 
             # Convert datetime strings back to datetime objects
             if 'client_id_issued_at' in data:
-                data['client_id_issued_at'] = datetime.fromisoformat(data['client_id_issued_at'])
+                if isinstance(data['client_id_issued_at'], str):
+                    data['client_id_issued_at'] = datetime.fromisoformat(data['client_id_issued_at'])
             if 'client_secret_expires_at' in data and data['client_secret_expires_at']:
-                data['client_secret_expires_at'] = datetime.fromisoformat(data['client_secret_expires_at'])
+                if isinstance(data['client_secret_expires_at'], str):
+                    data['client_secret_expires_at'] = datetime.fromisoformat(data['client_secret_expires_at'])
                 
+            logger.debug(f"Successfully loaded client data from filesystem: {client_id}")
             return data
+            
         except (OSError, PermissionError, json.JSONDecodeError) as e:
-            logger.warning(f"Cannot load client data from filesystem: {e}")
+            logger.warning(f"Cannot load client data from filesystem for {client_id}: {e}")
+            
+            # Try memory storage as fallback
+            if client_id in self.memory_storage:
+                logger.info(f"Using memory fallback for client: {client_id}")
+                import copy
+                return copy.deepcopy(self.memory_storage[client_id])
+            
+            logger.error(f"Client not found in filesystem or memory: {client_id}")
             return None
     
     def register_client(self, registration_request: Dict[str, Any]) -> Dict[str, Any]:

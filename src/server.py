@@ -988,6 +988,83 @@ async def oauth_debug(request: Request):
         "note": "Google should return ONLY the scopes we request. If you see extra scopes, check your Google Cloud Console OAuth consent screen settings."
     })
 
+# Add client registry diagnostic endpoint
+@mcp.custom_route("/debug/clients", methods=["GET"])
+async def debug_clients(request: Request):
+    """Debug endpoint for client registry diagnostics."""
+    try:
+        client_id = request.query_params.get("client_id")
+        
+        debug_info = {
+            "storage_path": str(client_registry.storage_path),
+            "use_memory_storage": client_registry.use_memory_storage,
+            "memory_clients": list(client_registry.memory_storage.keys()),
+            "memory_clients_count": len(client_registry.memory_storage),
+            "filesystem_accessible": False,
+            "filesystem_clients": [],
+            "filesystem_clients_count": 0
+        }
+        
+        # Check filesystem accessibility
+        try:
+            if client_registry.storage_path.exists():
+                debug_info["filesystem_accessible"] = True
+                filesystem_files = list(client_registry.storage_path.glob("dcr_*.json"))
+                debug_info["filesystem_clients"] = [f.stem for f in filesystem_files]
+                debug_info["filesystem_clients_count"] = len(filesystem_files)
+            else:
+                debug_info["filesystem_error"] = f"Storage directory does not exist: {client_registry.storage_path}"
+        except Exception as e:
+            debug_info["filesystem_error"] = str(e)
+        
+        # If specific client ID requested, provide detailed info
+        if client_id:
+            debug_info["requested_client_id"] = client_id
+            
+            # Check memory storage
+            if client_id in client_registry.memory_storage:
+                debug_info["client_found_in_memory"] = True
+                client_data = client_registry.memory_storage[client_id]
+                debug_info["client_status"] = client_data.get("status")
+                debug_info["client_name"] = client_data.get("client_name")
+            else:
+                debug_info["client_found_in_memory"] = False
+            
+            # Check filesystem
+            try:
+                client_file = client_registry._get_client_file_path(client_id)
+                if client_file.exists():
+                    debug_info["client_found_in_filesystem"] = True
+                    debug_info["client_file_path"] = str(client_file)
+                else:
+                    debug_info["client_found_in_filesystem"] = False
+                    debug_info["client_file_path"] = str(client_file)
+            except Exception as e:
+                debug_info["filesystem_check_error"] = str(e)
+            
+            # Try to load the client
+            try:
+                client_data = client_registry.get_client(client_id)
+                debug_info["client_loadable"] = client_data is not None
+                if client_data:
+                    debug_info["client_summary"] = {
+                        "status": client_data.get("status"),
+                        "name": client_data.get("client_name"),
+                        "created_at": str(client_data.get("created_at")),
+                        "redirect_uris": client_data.get("redirect_uris", [])
+                    }
+            except Exception as e:
+                debug_info["client_load_error"] = str(e)
+        
+        return JSONResponse(debug_info)
+        
+    except Exception as e:
+        logger.error(f"Error in client debug endpoint: {e}")
+        return JSONResponse({
+            "error": "debug_error",
+            "error_description": str(e)
+        }, status_code=500)
+
 # Add email preview endpoint
 @mcp.custom_route("/preview/email/{theme}", methods=["GET"])
 async def preview_email(request: Request):
