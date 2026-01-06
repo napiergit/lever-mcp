@@ -12,7 +12,7 @@ from pathlib import Path
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
-from mcp import FastMCP
+from fastmcp import FastMCP
 
 # Add current directory to Python path for cloud deployment
 current_dir = os.path.dirname(os.path.abspath(__file__))
