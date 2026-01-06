@@ -576,7 +576,7 @@ if oauth_enabled:
             
             # Use dynamic client's configuration
             google_client_id = oauth_config.client_id  # Still use our Google app for upstream
-            final_redirect_uri = redirect_uri  # Use the client's redirect_uri from DCR registration
+            final_redirect_uri = oauth_config.redirect_uri  # ALWAYS use MCP server's callback for Google
             
             logger.info(f"Dynamic client authorization: {dynamic_client.get('client_name', client_id)}")
             
