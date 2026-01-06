@@ -193,35 +193,8 @@ if oauth_config.is_configured():
     logger.info(f"MCP_SERVER_BASE_URL from environment: {os.getenv('MCP_SERVER_BASE_URL')}")
     logger.info(f"Using base_url: {base_url}")
     
-    # Create OAuth proxy for Google
-    # Use StaticTokenVerifier temporarily, then replace with self-verification
-    temp_verifier = StaticTokenVerifier(tokens=set())
-    
-    auth_provider = OAuthProxy(
-        upstream_authorization_endpoint="https://accounts.google.com/o/oauth2/auth",
-        upstream_token_endpoint="https://oauth2.googleapis.com/token",
-        upstream_client_id=oauth_config.client_id,
-        upstream_client_secret=oauth_config.client_secret,
-        token_verifier=temp_verifier,
-        base_url=base_url,
-        redirect_path="/oauth/callback",  # Changed to match what Toqan expects
-        # Don't set valid_scopes - this causes strict validation
-        # Google may return additional scopes (openid, email, profile) beyond what we request
-        forward_pkce=True,
-        extra_authorize_params={
-            "access_type": "offline",  # Request refresh token
-            "prompt": "consent"  # Always show consent screen
-        }
-    )
-    
-    logger.info(f"OAuth proxy redirect URI will be: {base_url}/oauth/callback")
-    
-    # Don't set required_scopes - this causes strict matching issues with Google
-    # Google may return scopes in different order or with additional scopes (openid, email, profile)
-    # By not setting valid_scopes or required_scopes, we allow Google to return whatever scopes it wants
-    
-    # Now set the proxy to verify its own tokens
-    auth_provider._token_verifier = auth_provider
+    # MCP server acts as OAuth authorization server with DCR support
+    # No OAuth proxy needed - we handle authorization directly
     logger.info(f"OAuth proxy configured with base URL: {base_url}")
 else:
     logger.warning("OAuth not configured - email sending will return payloads only")
