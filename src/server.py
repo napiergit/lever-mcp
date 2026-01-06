@@ -2307,9 +2307,47 @@ async def _send_email_simple(
             "message": f"Failed to send email: {str(e)}"
         }, indent=2)
 
-# Register send_email tool
-# mcp.tool(name="send_email")(_send_email)  # Commented out - OAuth handling version
-mcp.tool(name="send_email")(_send_email_simple)  # Simple version - no OAuth flow
+# Thread-local storage for request context
+import threading
+_request_context = threading.local()
+
+# Middleware to capture Authorization headers for MCP tool calls
+async def auth_middleware(request: Request, call_next):
+    """Capture Authorization header for MCP tool calls."""
+    # Store auth header in thread-local storage
+    auth_header = request.headers.get("authorization")
+    if auth_header:
+        if auth_header.startswith("Bearer "):
+            _request_context.access_token = auth_header[7:]
+        else:
+            _request_context.access_token = auth_header
+    else:
+        _request_context.access_token = None
+    
+    response = await call_next(request)
+    return response
+
+# Modified send_email that checks thread-local storage for auth token
+async def _send_email_with_auth(
+    to: str, 
+    theme: str, 
+    subject: Optional[str] = None, 
+    cc: Optional[str] = None, 
+    bcc: Optional[str] = None,
+    access_token: str = ""
+) -> str:
+    """Send email with Authorization header support."""
+    # Check thread-local storage for auth token if not provided
+    if not access_token and hasattr(_request_context, 'access_token') and _request_context.access_token:
+        access_token = _request_context.access_token
+    
+    return await _send_email_simple(to, theme, subject, cc, bcc, access_token)
+
+# Add middleware to FastMCP server
+mcp.add_middleware(auth_middleware)
+
+# Register send_email tool with auth support
+mcp.tool(name="send_email")(_send_email_with_auth)
 
 # Register generate_email_content - NO OAuth required (just generates content)
 # mcp.tool(name="generate_email_content")(_generate_email_content)
