@@ -42,6 +42,31 @@ logger = logging.getLogger("lever-mcp")
 # Structure: {session_id: {"code": str, "timestamp": datetime, "state": str}}
 oauth_sessions = {}
 
+# In-memory storage for MCP token -> Google token mapping
+# Structure: {mcp_access_token: {"google_token": dict, "client_id": str, "timestamp": datetime, "user_id": str}}
+mcp_token_store = {}
+
+def get_google_token_from_mcp_token(mcp_token: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve Google token from MCP token.
+    
+    Args:
+        mcp_token: MCP access token provided by client
+        
+    Returns:
+        Google token data if valid, None otherwise
+    """
+    if not mcp_token:
+        return None
+        
+    token_data = mcp_token_store.get(mcp_token)
+    if not token_data:
+        return None
+        
+    # Check if token expired (could add expiration logic here)
+    # For now, just return the stored Google token
+    return token_data.get("google_token")
+
 # Shared email templates for all email tools
 EMAIL_TEMPLATES = {
     "birthday": {
@@ -659,12 +684,30 @@ if oauth_enabled:
                     "error_description": "Authorization code expired"
                 }, status_code=400)
             
-            # Return the Google token data we stored
+            # Generate MCP access token and store mapping to Google token
+            mcp_access_token = secrets.token_urlsafe(32)
             google_token_data = session_data["google_token_data"]
+            
+            # Store the mapping from MCP token to Google token
+            mcp_token_store[mcp_access_token] = {
+                "google_token": google_token_data,
+                "client_id": client_id,
+                "timestamp": datetime.now(),
+                "user_id": "default"  # Could be extracted from state if needed
+            }
+            
             del oauth_sessions[code]  # Clean up
             
-            logger.info(f"DCR token exchange successful for client: {client_id}")
-            return JSONResponse(google_token_data, status_code=200)
+            # Return MCP token response (not Google tokens!)
+            mcp_token_response = {
+                "access_token": mcp_access_token,
+                "token_type": "Bearer",
+                "scope": google_token_data.get("scope", " ".join(GMAIL_SCOPES)),
+                "expires_in": google_token_data.get("expires_in", 3600)
+            }
+            
+            logger.info(f"DCR token exchange successful for client: {client_id} - issued MCP token")
+            return JSONResponse(mcp_token_response, status_code=200)
         
         # Regular OAuth flow (non-DCR) - authenticate client
         dynamic_client = None
@@ -1239,7 +1282,8 @@ async def _send_email(
     cc: Optional[str] = None, 
     bcc: Optional[str] = None,
     access_token: Optional[str] = None,
-    user_id: str = "default"
+    user_id: str = "default",
+    _mcp_context: Optional[Dict[str, Any]] = None
 ) -> str:
     """
     Generate and send a themed email via Gmail API with OAuth 2.0.
@@ -1272,6 +1316,12 @@ async def _send_email(
     Returns:
         JSON response with email status and details, or automation instructions if OAuth needed
     """
+    # Extract access token from Authorization header if not provided directly
+    if not access_token and _mcp_context:
+        auth_header = _mcp_context.get("headers", {}).get("authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            access_token = auth_header[7:]  # Remove "Bearer " prefix
+            
     logger.info(f"Generating themed email: to={to}, theme={theme}, has_token={bool(access_token)}")
     
     # Use shared email templates
@@ -1288,8 +1338,17 @@ async def _send_email(
     # Do NOT try to load tokens from disk - production has read-only filesystem
     if access_token:
         try:
-            logger.info("Using provided access_token (on-behalf-of flow)")
-            gmail_client = GmailClient(access_token=access_token, user_id=user_id)
+            # Check if this is an MCP token that needs to be mapped to a Google token
+            google_token_data = get_google_token_from_mcp_token(access_token)
+            if google_token_data:
+                # MCP token flow - use the stored Google token
+                logger.info("Using MCP access_token - looking up Google token")
+                google_access_token = google_token_data.get("access_token")
+                gmail_client = GmailClient(access_token=google_access_token, user_id=user_id)
+            else:
+                # Direct Google token flow (legacy)
+                logger.info("Using provided access_token as Google token (legacy flow)")
+                gmail_client = GmailClient(access_token=access_token, user_id=user_id)
             
             if gmail_client.is_authenticated():
                 # Send the email
