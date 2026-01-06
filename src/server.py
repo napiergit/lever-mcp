@@ -2215,8 +2215,97 @@ mcp.tool(name="list_candidates")(_list_candidates)
 mcp.tool(name="get_candidate")(_get_candidate)
 mcp.tool(name="create_requisition")(_create_requisition)
 
+async def _send_email_simple(
+    to: str, 
+    theme: str, 
+    subject: Optional[str] = None, 
+    cc: Optional[str] = None, 
+    bcc: Optional[str] = None,
+    access_token: str = ""
+) -> str:
+    """
+    Send a themed email via Gmail API. Requires valid MCP access token.
+    
+    This tool does NOT handle OAuth flow - it expects authentication to be completed already.
+    The access_token should be an MCP token obtained through the OAuth flow.
+    
+    Args:
+        to: Recipient email address
+        theme: Email theme (birthday, pirate, space, medieval, superhero, tropical)
+        subject: Optional custom subject (uses theme default if not provided)
+        cc: Optional CC recipients
+        bcc: Optional BCC recipients
+        access_token: MCP access token (required)
+        
+    Returns:
+        JSON response with email status and details
+    """
+    if not access_token:
+        return json.dumps({
+            "status": "error",
+            "message": "Access token required. Complete OAuth flow first using get_oauth_url and exchange_oauth_code tools."
+        }, indent=2)
+    
+    logger.info(f"Sending themed email: to={to}, theme={theme}")
+    
+    # Use shared email templates
+    template = EMAIL_TEMPLATES.get(theme.lower(), EMAIL_TEMPLATES["birthday"])
+    email_subject = subject if subject else template["subject"]
+    email_body = template["body"]
+    
+    try:
+        # Check if this is an MCP token that needs to be mapped to a Google token
+        google_token_data = get_google_token_from_mcp_token(access_token)
+        if google_token_data:
+            # MCP token flow - use the stored Google token
+            logger.info("Using MCP access_token - looking up Google token")
+            google_access_token = google_token_data.get("access_token")
+            gmail_client = GmailClient(access_token=google_access_token, user_id="default")
+        else:
+            # Direct Google token flow (fallback)
+            logger.info("Using provided access_token as Google token")
+            gmail_client = GmailClient(access_token=access_token, user_id="default")
+        
+        if not gmail_client.is_authenticated():
+            return json.dumps({
+                "status": "error",
+                "message": "Invalid or expired access token"
+            }, indent=2)
+        
+        # Send the email
+        result = await gmail_client.send_email(
+            to=to,
+            subject=email_subject,
+            body=email_body,
+            cc=cc,
+            bcc=bcc,
+            is_html=True
+        )
+        
+        response = {
+            "status": "sent",
+            "message": "Email sent successfully via Gmail API",
+            "message_id": result["message_id"],
+            "theme": theme,
+            "to": to,
+            "subject": email_subject,
+            "cc": cc,
+            "bcc": bcc
+        }
+        
+        logger.info(f"Email sent successfully: {result['message_id']}")
+        return json.dumps(response, indent=2)
+        
+    except Exception as e:
+        logger.error(f"Error sending email: {e}")
+        return json.dumps({
+            "status": "error",
+            "message": f"Failed to send email: {str(e)}"
+        }, indent=2)
+
 # Register send_email tool
-mcp.tool(name="send_email")(_send_email)
+# mcp.tool(name="send_email")(_send_email)  # Commented out - OAuth handling version
+mcp.tool(name="send_email")(_send_email_simple)  # Simple version - no OAuth flow
 
 # Register generate_email_content - NO OAuth required (just generates content)
 # mcp.tool(name="generate_email_content")(_generate_email_content)
