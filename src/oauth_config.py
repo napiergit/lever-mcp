@@ -22,8 +22,8 @@ class OAuthConfig:
     def __init__(self):
         self.client_id = os.getenv('GOOGLE_CLIENT_ID')
         self.client_secret = os.getenv('GOOGLE_CLIENT_SECRET')
-        # Use dedicated OAUTH_CALLBACK_URL environment variable, fallback to MCP_SERVER_BASE_URL construction
-        self.redirect_uri = os.getenv('OAUTH_CALLBACK_URL')
+        # Use GOOGLE_OAUTH_CALLBACK_URL for Google OAuth redirects, with fallbacks
+        self.redirect_uri = os.getenv('GOOGLE_OAUTH_CALLBACK_URL') or os.getenv('OAUTH_CALLBACK_URL')
         if not self.redirect_uri:
             # Fallback to old behavior for backward compatibility
             base_url = os.getenv('MCP_SERVER_BASE_URL', 'https://isolated-coffee-reindeer.fastmcp.app')

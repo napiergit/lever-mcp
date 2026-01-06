@@ -1,19 +1,27 @@
 import os
 import sys
+import json
+import logging
+import httpx
+import base64
+import uuid
+import secrets
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional
+from pathlib import Path
+
+from fastapi import Request
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
+from mcp import FastMCP
 
 # Add current directory to Python path for cloud deployment
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-from fastmcp import FastMCP
-from fastmcp.server.auth import OAuthProxy, StaticTokenVerifier
-
-# Import local modules
 try:
-    from .client import LeverClient
-    from .gmail_client import GmailClient  
-    from .oauth_config import oauth_config, GMAIL_SCOPES
+    from .oauth_config import OAuthConfig, GMAIL_SCOPES
+    from .gmail_client import GmailClient
     from .client_registry import client_registry
 except ImportError:
     # Fallback for cloud deployment
@@ -21,15 +29,6 @@ except ImportError:
     from gmail_client import GmailClient
     from oauth_config import oauth_config, GMAIL_SCOPES
     from client_registry import client_registry
-from typing import Optional, Dict, Any
-from starlette.responses import JSONResponse, RedirectResponse, HTMLResponse
-from starlette.requests import Request
-import logging
-import json
-import base64
-import time
-import uuid
-from datetime import datetime, timedelta
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -322,13 +321,13 @@ if auth_provider:
                     </html>
                 """, status_code=400)
         
-        # Store code for browser agent polling if this looks like a browser agent session
+        # Parse state to determine client type and handle appropriately
         session_id = None
         dynamic_client_info = None
         
-        # Parse state to determine client type and session info
         if state:
             if state.startswith('browser_agent_'):
+                # Browser agent polling flow - store for polling
                 session_id = state.replace('browser_agent_', '')
                 oauth_sessions[session_id] = {
                     "code": code,
@@ -336,47 +335,92 @@ if auth_provider:
                     "state": state
                 }
                 logger.info(f"Stored OAuth code for browser agent session: {session_id}")
+                
+                # Return HTML for browser agents (legacy behavior)
+                if not is_json_request:
+                    # Continue with the existing HTML response for browser agents
+                    pass
+                    
             elif state.startswith('dcr_'):
-                # Dynamic client registration flow
+                # DCR client OAuth flow - redirect back to client
                 try:
                     state_json = base64.urlsafe_b64decode(state[4:]).decode()
                     dynamic_client_info = json.loads(state_json)
-                    logger.info(f"Dynamic client callback: {dynamic_client_info.get('client_id')}")
-                except Exception as e:
-                    logger.error(f"Error parsing dynamic client state: {e}")
+                    client_id = dynamic_client_info.get('client_id')
+                    original_redirect_uri = dynamic_client_info.get('redirect_uri')
+                    original_state = dynamic_client_info.get('original_state', '')
                     
-                # Also check if it's a browser agent session for a dynamic client
-                original_state = dynamic_client_info.get('original_state', '') if dynamic_client_info else ''
-                if original_state.startswith('browser_agent_'):
-                    session_id = original_state.replace('browser_agent_', '')
-                    oauth_sessions[session_id] = {
-                        "code": code,
-                        "timestamp": datetime.now(),
-                        "state": state,
-                        "dynamic_client": dynamic_client_info
-                    }
-                    logger.info(f"Stored OAuth code for dynamic client browser agent session: {session_id}")
+                    logger.info(f"DCR client callback: {client_id}")
+                    
+                    # Exchange Google code for user info to verify authentication
+                    google_client_id = oauth_config.client_id
+                    google_client_secret = oauth_config.client_secret
+                    google_redirect_uri = oauth_config.redirect_uri
+                    
+                    async with httpx.AsyncClient() as client:
+                        token_response = await client.post(
+                            "https://oauth2.googleapis.com/token",
+                            data={
+                                "code": code,
+                                "client_id": google_client_id,
+                                "client_secret": google_client_secret,
+                                "redirect_uri": google_redirect_uri,
+                                "grant_type": "authorization_code"
+                            }
+                        )
+                        
+                        if token_response.status_code != 200:
+                            logger.error(f"Google token exchange failed: {token_response.text}")
+                            return HTMLResponse(f"""
+                                <html><body>
+                                    <h1>Authentication Failed</h1>
+                                    <p>Unable to verify authentication with Google.</p>
+                                    <p>Error: {token_response.status_code}</p>
+                                </body></html>
+                            """, status_code=400)
+                        
+                        # Generate MCP authorization code
+                        mcp_auth_code = secrets.token_urlsafe(32)
+                        
+                        # Store the Google token and client info for later exchange
+                        oauth_sessions[mcp_auth_code] = {
+                            "google_token_data": token_response.json(),
+                            "client_id": client_id,
+                            "timestamp": datetime.now(),
+                            "type": "dcr_auth_code"
+                        }
+                        
+                        logger.info(f"Generated MCP auth code for DCR client: {client_id}")
+                        
+                        # Redirect back to client with MCP authorization code
+                        redirect_params = {"code": mcp_auth_code}
+                        if original_state:
+                            redirect_params["state"] = original_state
+                        
+                        from urllib.parse import urlencode
+                        redirect_url = f"{original_redirect_uri}?{urlencode(redirect_params)}"
+                        
+                        logger.info(f"Redirecting to client: {redirect_url}")
+                        return RedirectResponse(url=redirect_url, status_code=302)
+                        
+                except Exception as e:
+                    logger.error(f"Error processing DCR callback: {e}")
+                    return HTMLResponse(f"""
+                        <html><body>
+                            <h1>Authentication Error</h1>
+                            <p>Unable to process authentication callback.</p>
+                            <p>Error: {str(e)}</p>
+                        </body></html>
+                    """, status_code=500)
         
-        # Return appropriate success response based on client type
+        # Fallback for other flows or JSON requests
         if is_json_request:
-            # Return JSON response for API clients (Toqan)
-            response_data = {
+            return JSONResponse({
                 "success": True,
                 "code": code,
                 "state": state,
                 "scope": callback_scope
-            }
-            
-            # Add session info if available
-            if session_id:
-                response_data["session_id"] = session_id
-            
-            # Add dynamic client info if available  
-            if dynamic_client_info:
-                response_data["client_id"] = dynamic_client_info.get("client_id")
-                
-            logger.info(f"Returning JSON OAuth callback response for state: {state}")
-            return JSONResponse(response_data, status_code=200)
+            }, status_code=200)
         
         # Return success page that closes popup and sends code to parent (for browser clients)
         return HTMLResponse(f"""
@@ -529,7 +573,7 @@ if auth_provider:
             
             # Use dynamic client's configuration
             google_client_id = oauth_config.client_id  # Still use our Google app for upstream
-            final_redirect_uri = oauth_config.redirect_uri  # Use our callback handler
+            final_redirect_uri = redirect_uri  # Use the client's redirect_uri from DCR registration
             
             logger.info(f"Dynamic client authorization: {dynamic_client.get('client_name', client_id)}")
             
@@ -605,7 +649,46 @@ if auth_provider:
                 "error_description": "Only authorization_code grant type is supported"
             }, status_code=400)
         
-        # Authenticate client (dynamic or static)
+        # Check if this is an MCP authorization code (from our DCR flow)
+        if code in oauth_sessions and oauth_sessions[code].get("type") == "dcr_auth_code":
+            session_data = oauth_sessions[code]
+            
+            # Authenticate the DCR client
+            if not client_id or not client_secret:
+                return JSONResponse({
+                    "error": "invalid_client",
+                    "error_description": "Client authentication required for DCR flow"
+                }, status_code=401)
+                
+            if not client_registry.authenticate_client(client_id, client_secret):
+                return JSONResponse({
+                    "error": "invalid_client",
+                    "error_description": "Client authentication failed"
+                }, status_code=401)
+            
+            # Verify this code belongs to this client
+            if session_data.get("client_id") != client_id:
+                return JSONResponse({
+                    "error": "invalid_grant",
+                    "error_description": "Authorization code does not belong to this client"
+                }, status_code=400)
+            
+            # Check if code expired (10 minutes)
+            if datetime.now() - session_data["timestamp"] > timedelta(minutes=10):
+                del oauth_sessions[code]
+                return JSONResponse({
+                    "error": "invalid_grant",
+                    "error_description": "Authorization code expired"
+                }, status_code=400)
+            
+            # Return the Google token data we stored
+            google_token_data = session_data["google_token_data"]
+            del oauth_sessions[code]  # Clean up
+            
+            logger.info(f"DCR token exchange successful for client: {client_id}")
+            return JSONResponse(google_token_data, status_code=200)
+        
+        # Regular OAuth flow (non-DCR) - authenticate client
         dynamic_client = None
         if client_id:
             # Dynamic client authentication
@@ -647,7 +730,7 @@ if auth_provider:
                 }, status_code=500)
             logger.info("Static client token exchange (legacy flow)")
         
-        # Exchange code for token with Google
+        # Exchange code for token with Google (for non-DCR flows)
         google_client_id = oauth_config.client_id  # Always use our upstream Google app
         google_client_secret = oauth_config.client_secret
         google_redirect_uri = oauth_config.redirect_uri
