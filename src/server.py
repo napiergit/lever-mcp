@@ -2156,21 +2156,8 @@ mcp.tool(name="list_candidates")(_list_candidates)
 mcp.tool(name="get_candidate")(_get_candidate)
 mcp.tool(name="create_requisition")(_create_requisition)
 
-# Register send_email with OAuth metadata
-if auth_provider:
-    # Add OAuth metadata to the send_email tool
-    mcp.tool(
-        name="send_email",
-        annotations={
-            "oauth": {
-                "required": True,
-                "scopes": GMAIL_SCOPES,
-                "authorization_server": str(auth_provider.base_url)
-            }
-        }
-    )(_send_email)
-else:
-    mcp.tool(name="send_email")(_send_email)
+# Register send_email tool
+mcp.tool(name="send_email")(_send_email)
 
 # Register generate_email_content - NO OAuth required (just generates content)
 # mcp.tool(name="generate_email_content")(_generate_email_content)
