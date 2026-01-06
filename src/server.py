@@ -751,52 +751,52 @@ if auth_provider:
             
             # Return the token data with normalized scopes
             return JSONResponse(token_data)
-    
-    # Add authorization server metadata
-    @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
-    async def oauth_authorization_server_metadata(request: Request):
-        """OAuth authorization server metadata with DCR support."""
-        base_url = os.getenv('MCP_SERVER_BASE_URL', 'https://isolated-coffee-reindeer.fastmcp.app')
-        base = base_url.rstrip('/')
-        return JSONResponse({
-            "issuer": base + "/",
-            "authorization_endpoint": f"{base}/authorize",
-            "token_endpoint": f"{base}/token",
-            "registration_endpoint": f"{base}/clients",  # RFC 7591 DCR endpoint
-            # Don't advertise specific scopes - accept whatever Google returns
-            "response_types_supported": ["code"],
-            "grant_types_supported": ["authorization_code", "refresh_token"],
-            "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "none"],
-            "code_challenge_methods_supported": ["S256"],
-            # Dynamic Client Registration capabilities
-            "registration_endpoint": f"{base}/clients",
-            "registration_endpoint_auth_methods_supported": ["none"],  # Open registration
-            "registration_endpoint_auth_signing_alg_values_supported": [],
-            # Additional DCR metadata
-            "client_id_metadata_supported": True,
-            "client_secret_metadata_supported": True,
-            "registration_access_token_supported": True,
-            "client_registration_types_supported": ["automatic"],
-            # Supported client metadata fields
-            "client_metadata_supported": [
-                "client_name", "client_uri", "logo_uri", "contacts", "tos_uri", "policy_uri",
-                "redirect_uris", "response_types", "grant_types", "application_type", 
-                "token_endpoint_auth_method", "scope", "jwks_uri", "software_id", "software_version"
-            ]
-        })
-    
-    # Add protected resource metadata
-    @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
-    async def oauth_protected_resource_root(request: Request):
-        """Protected resource metadata at root level for Toqan compatibility."""
-        base_url = os.getenv('MCP_SERVER_BASE_URL', 'https://isolated-coffee-reindeer.fastmcp.app')
-        base = base_url.rstrip('/')
-        return JSONResponse({
-            "resource": base,
-            "authorization_servers": [base],
-            # Don't advertise specific scopes - accept whatever Google returns
-            "bearer_methods_supported": ["header"]
-        })
+
+# Add authorization server metadata
+@mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
+async def oauth_authorization_server_metadata(request: Request):
+    """OAuth authorization server metadata with DCR support."""
+    base_url = os.getenv('MCP_SERVER_BASE_URL', 'https://isolated-coffee-reindeer.fastmcp.app')
+    base = base_url.rstrip('/')
+    return JSONResponse({
+        "issuer": base + "/",
+        "authorization_endpoint": f"{base}/authorize",
+        "token_endpoint": f"{base}/token",
+        "registration_endpoint": f"{base}/clients",  # RFC 7591 DCR endpoint
+        # Don't advertise specific scopes - accept whatever Google returns
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "none"],
+        "code_challenge_methods_supported": ["S256"],
+        # Dynamic Client Registration capabilities
+        "registration_endpoint": f"{base}/clients",
+        "registration_endpoint_auth_methods_supported": ["none"],  # Open registration
+        "registration_endpoint_auth_signing_alg_values_supported": [],
+        # Additional DCR metadata
+        "client_id_metadata_supported": True,
+        "client_secret_metadata_supported": True,
+        "registration_access_token_supported": True,
+        "client_registration_types_supported": ["automatic"],
+        # Supported client metadata fields
+        "client_metadata_supported": [
+            "client_name", "client_uri", "logo_uri", "contacts", "tos_uri", "policy_uri",
+            "redirect_uris", "response_types", "grant_types", "application_type", 
+            "token_endpoint_auth_method", "scope", "jwks_uri", "software_id", "software_version"
+        ]
+    })
+
+# Add protected resource metadata
+@mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
+async def oauth_protected_resource_root(request: Request):
+    """Protected resource metadata at root level for Toqan compatibility."""
+    base_url = os.getenv('MCP_SERVER_BASE_URL', 'https://isolated-coffee-reindeer.fastmcp.app')
+    base = base_url.rstrip('/')
+    return JSONResponse({
+        "resource": base,
+        "authorization_servers": [base],
+        # Don't advertise specific scopes - accept whatever Google returns
+        "bearer_methods_supported": ["header"]
+    })
 
 # Dynamic Client Registration endpoints (RFC 7591)
 @mcp.custom_route("/clients", methods=["POST"])
