@@ -183,8 +183,9 @@ EMAIL_TEMPLATES = {
 }
 
 # Initialize FastMCP server with OAuth proxy
-auth_provider = None
-if oauth_config.is_configured():
+# Check if OAuth is configured and set up accordingly
+oauth_enabled = oauth_config.is_configured()
+if oauth_enabled:
     logger.info("OAuth configured - Setting up OAuth proxy for Gmail integration")
     
     # Get base URL from environment or use deployed URL
@@ -205,7 +206,7 @@ else:
 # The OAuthProxy's built-in endpoints do strict scope validation which breaks with Google
 mcp = FastMCP("lever")
 
-if auth_provider:
+if oauth_enabled:
     # Add OAuth callback handler
     @mcp.custom_route("/oauth/callback", methods=["GET"])
     async def oauth_callback(request: Request):
