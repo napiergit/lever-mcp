@@ -244,58 +244,83 @@ if auth_provider:
         error = request.query_params.get("error")
         callback_scope = request.query_params.get("scope")
         
+        # Check if this is a JSON API request (from Toqan/MCP clients)
+        accept_header = request.headers.get("accept", "")
+        is_json_request = "application/json" in accept_header or request.query_params.get("format") == "json"
+        
         # Log what Google returned in the callback
         logger.info(f"OAuth callback received. State: {state}")
+        logger.info(f"Accept header: {accept_header}")
+        logger.info(f"JSON request: {is_json_request}")
         logger.info(f"Scopes in callback URL: {callback_scope}")
         if callback_scope:
             logger.info(f"Callback scope breakdown: {callback_scope.split()}")
         
         if error:
             error_desc = request.query_params.get("error_description", "OAuth authorization failed")
-            # Return HTML page that closes popup and sends error to parent
-            return HTMLResponse(f"""
-                <html>
-                <head><title>Authorization Failed</title></head>
-                <body>
-                    <h1>❌ Authorization Failed</h1>
-                    <p>{error}: {error_desc}</p>
-                    <p>You can close this window.</p>
-                    <script>
-                        // Send error to parent window if opened as popup
-                        if (window.opener) {{
-                            window.opener.postMessage({{
-                                type: 'oauth_error',
-                                error: '{error}',
-                                error_description: '{error_desc}'
-                            }}, '*');
-                            window.close();
-                        }}
-                    </script>
-                </body>
-                </html>
-            """, status_code=400)
+            
+            if is_json_request:
+                # Return JSON error for API clients (Toqan)
+                return JSONResponse({
+                    "success": false,
+                    "error": error,
+                    "error_description": error_desc,
+                    "state": state
+                }, status_code=400)
+            else:
+                # Return HTML page that closes popup and sends error to parent
+                return HTMLResponse(f"""
+                    <html>
+                    <head><title>Authorization Failed</title></head>
+                    <body>
+                        <h1>❌ Authorization Failed</h1>
+                        <p>{error}: {error_desc}</p>
+                        <p>You can close this window.</p>
+                        <script>
+                            // Send error to parent window if opened as popup
+                            if (window.opener) {{
+                                window.opener.postMessage({{
+                                    type: 'oauth_error',
+                                    error: '{error}',
+                                    error_description: '{error_desc}'
+                                }}, '*');
+                                window.close();
+                            }}
+                        </script>
+                    </body>
+                    </html>
+                """, status_code=400)
         
         if not code:
-            return HTMLResponse("""
-                <html>
-                <head><title>Authorization Failed</title></head>
-                <body>
-                    <h1>❌ Authorization Failed</h1>
-                    <p>No authorization code received.</p>
-                    <p>You can close this window.</p>
-                    <script>
-                        if (window.opener) {
-                            window.opener.postMessage({
-                                type: 'oauth_error',
-                                error: 'missing_code',
-                                error_description: 'No authorization code received'
-                            }, '*');
-                            window.close();
-                        }
-                    </script>
-                </body>
-                </html>
-            """, status_code=400)
+            if is_json_request:
+                # Return JSON error for API clients (Toqan)
+                return JSONResponse({
+                    "success": false,
+                    "error": "missing_code",
+                    "error_description": "No authorization code received",
+                    "state": state
+                }, status_code=400)
+            else:
+                return HTMLResponse("""
+                    <html>
+                    <head><title>Authorization Failed</title></head>
+                    <body>
+                        <h1>❌ Authorization Failed</h1>
+                        <p>No authorization code received.</p>
+                        <p>You can close this window.</p>
+                        <script>
+                            if (window.opener) {
+                                window.opener.postMessage({
+                                    type: 'oauth_error',
+                                    error: 'missing_code',
+                                    error_description: 'No authorization code received'
+                                }, '*');
+                                window.close();
+                            }
+                        </script>
+                    </body>
+                    </html>
+                """, status_code=400)
         
         # Store code for browser agent polling if this looks like a browser agent session
         session_id = None
@@ -332,7 +357,28 @@ if auth_provider:
                     }
                     logger.info(f"Stored OAuth code for dynamic client browser agent session: {session_id}")
         
-        # Return success page that closes popup and sends code to parent
+        # Return appropriate success response based on client type
+        if is_json_request:
+            # Return JSON response for API clients (Toqan)
+            response_data = {
+                "success": True,
+                "code": code,
+                "state": state,
+                "scope": callback_scope
+            }
+            
+            # Add session info if available
+            if session_id:
+                response_data["session_id"] = session_id
+            
+            # Add dynamic client info if available  
+            if dynamic_client_info:
+                response_data["client_id"] = dynamic_client_info.get("client_id")
+                
+            logger.info(f"Returning JSON OAuth callback response for state: {state}")
+            return JSONResponse(response_data, status_code=200)
+        
+        # Return success page that closes popup and sends code to parent (for browser clients)
         return HTMLResponse(f"""
             <html>
             <head>
