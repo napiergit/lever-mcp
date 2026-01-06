@@ -756,7 +756,8 @@ if auth_provider:
     @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
     async def oauth_authorization_server_metadata(request: Request):
         """OAuth authorization server metadata with DCR support."""
-        base = str(auth_provider.base_url).rstrip('/')
+        base_url = os.getenv('MCP_SERVER_BASE_URL', 'https://isolated-coffee-reindeer.fastmcp.app')
+        base = base_url.rstrip('/')
         return JSONResponse({
             "issuer": base + "/",
             "authorization_endpoint": f"{base}/authorize",
@@ -788,7 +789,8 @@ if auth_provider:
     @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
     async def oauth_protected_resource_root(request: Request):
         """Protected resource metadata at root level for Toqan compatibility."""
-        base = str(auth_provider.base_url).rstrip('/')
+        base_url = os.getenv('MCP_SERVER_BASE_URL', 'https://isolated-coffee-reindeer.fastmcp.app')
+        base = base_url.rstrip('/')
         return JSONResponse({
             "resource": base,
             "authorization_servers": [base],
