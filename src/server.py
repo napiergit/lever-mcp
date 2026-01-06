@@ -10,6 +10,10 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from pathlib import Path
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import Request
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from fastmcp import FastMCP
