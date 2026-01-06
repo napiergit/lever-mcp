@@ -2240,10 +2240,14 @@ async def _send_email_simple(
     Returns:
         JSON response with email status and details
     """
+    # Strip "Bearer " prefix if present in access_token
+    if access_token and access_token.startswith("Bearer "):
+        access_token = access_token[7:]  # Remove "Bearer " prefix
+    
     if not access_token:
         return json.dumps({
             "status": "error",
-            "message": "Access token required. Complete OAuth flow first using get_oauth_url and exchange_oauth_code tools."
+            "message": "Authentication required"
         }, indent=2)
     
     logger.info(f"Sending themed email: to={to}, theme={theme}")
