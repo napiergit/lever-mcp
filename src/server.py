@@ -1282,8 +1282,7 @@ async def _send_email(
     cc: Optional[str] = None, 
     bcc: Optional[str] = None,
     access_token: Optional[str] = None,
-    user_id: str = "default",
-    _mcp_context: Optional[Dict[str, Any]] = None
+    user_id: str = "default"
 ) -> str:
     """
     Generate and send a themed email via Gmail API with OAuth 2.0.
@@ -1316,11 +1315,8 @@ async def _send_email(
     Returns:
         JSON response with email status and details, or automation instructions if OAuth needed
     """
-    # Extract access token from Authorization header if not provided directly
-    if not access_token and _mcp_context:
-        auth_header = _mcp_context.get("headers", {}).get("authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            access_token = auth_header[7:]  # Remove "Bearer " prefix
+    # Note: Authorization header support would need to be implemented at the MCP protocol level
+    # For now, access_token must be provided directly as a parameter
             
     logger.info(f"Generating themed email: to={to}, theme={theme}, has_token={bool(access_token)}")
     
