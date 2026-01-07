@@ -24,14 +24,14 @@ if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
 try:
-    from .oauth_config import OAuthConfig, GMAIL_SCOPES
+    from .oauth_config import OAuthConfig, GMAIL_SCOPES, oauth_config
     from .gmail_client import GmailClient
     from .client_registry import client_registry
 except ImportError:
     # Fallback for cloud deployment
     from client import LeverClient
     from gmail_client import GmailClient
-    from oauth_config import oauth_config, GMAIL_SCOPES
+    from oauth_config import OAuthConfig, GMAIL_SCOPES, oauth_config
     from client_registry import client_registry
 
 # Configure logging
@@ -2343,9 +2343,8 @@ async def _send_email_with_auth(
     
     return await _send_email_simple(to, theme, subject, cc, bcc, access_token)
 
-# Add middleware to the underlying FastAPI app instead of FastMCP
-# This ensures it doesn't interfere with MCP protocol handling
-mcp.app.middleware("http")(auth_middleware)
+# Add middleware to FastMCP server
+mcp.add_middleware(auth_middleware)
 
 # Register send_email tool with auth support
 mcp.tool(name="send_email")(_send_email_with_auth)
