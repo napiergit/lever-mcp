@@ -2427,47 +2427,10 @@ async def _send_email_simple(
             "message": f"Failed to send email: {str(e)}"
         }, indent=2)
 
-# Thread-local storage for request context
-import threading
-_request_context = threading.local()
+# FastMCP handles authentication automatically with auth providers
+# No manual auth middleware needed
 
-# Middleware to capture Authorization headers for MCP tool calls
-async def auth_middleware(request, call_next):
-    """Capture Authorization header for MCP tool calls."""
-    # Store auth header in thread-local storage using comprehensive header detection
-    auth_header = None
-    
-    # Check various possible locations for headers (same as logging middleware)
-    if hasattr(request, 'headers'):
-        try:
-            auth_header = request.headers.get("authorization")
-        except Exception:
-            pass
-    
-    if not auth_header and hasattr(request, 'scope') and isinstance(request.scope, dict):
-        scope_headers = request.scope.get('headers', [])
-        # Convert ASGI header format
-        for name, value in scope_headers:
-            key = name.decode('latin1').lower()
-            if key == 'authorization':
-                auth_header = value.decode('latin1')
-                break
-    
-    if not auth_header and hasattr(request, 'meta') and isinstance(request.meta, dict):
-        auth_header = request.meta.get("authorization")
-    
-    if auth_header:
-        if auth_header.startswith("Bearer "):
-            _request_context.access_token = auth_header[7:]
-        else:
-            _request_context.access_token = auth_header
-    else:
-        _request_context.access_token = None
-    
-    response = await call_next(request)
-    return response
-
-# Modified send_email that checks thread-local storage for auth token
+# Modified send_email using FastMCP's proper dependency injection
 async def _send_email_with_auth(
     to: str, 
     theme: str, 
@@ -2488,10 +2451,11 @@ async def _send_email_with_auth(
     Returns:
         JSON response with email status and details
     """
-    # Get auth token from thread-local storage
-    access_token = None
-    if hasattr(_request_context, 'access_token') and _request_context.access_token:
-        access_token = _request_context.access_token
+    from fastmcp.server.dependencies import get_access_token
+    
+    # Get auth token using FastMCP's dependency injection
+    access_token_obj = get_access_token()
+    access_token = access_token_obj.token if access_token_obj else None
     
     return await _send_email_simple(to, theme, subject, cc, bcc, access_token)
 
@@ -2576,38 +2540,46 @@ async def all_request_logging_middleware(request, call_next):
     logger.info(f"Request type: {type(request).__name__}")
     logger.info(f"Request attributes: {[attr for attr in dir(request) if not attr.startswith('_')]}")
     
-    # Debug actual Python object structure
-    logger.info(f"=== PYTHON OBJECT DEBUG ===")
+    # Debug HTTP request using FastMCP's proper methods
+    logger.info(f"=== HTTP REQUEST DEBUG ===")
     
-    # Show what's actually on the request object
-    for attr in ['headers', 'scope', 'meta', 'method', 'url', 'query_params']:
-        if hasattr(request, attr):
-            value = getattr(request, attr)
-            logger.info(f"request.{attr}: {type(value)} = {value}")
+    # Try FastMCP's get_http_headers method
+    try:
+        from fastmcp.server.dependencies import get_http_headers
+        headers = get_http_headers(include_all=True)
+        logger.info(f"get_http_headers() result: {headers}")
+        
+        auth_header = headers.get("authorization") or headers.get("Authorization")
+        if auth_header:
+            logger.info(f"✅ Authorization header found: {auth_header}")
         else:
-            logger.info(f"request.{attr}: NOT PRESENT")
+            logger.warning(f"❌ No Authorization header in get_http_headers()")
+            
+    except Exception as e:
+        logger.error(f"Failed to get headers via get_http_headers(): {e}")
     
-    # If scope exists, show its structure  
-    if hasattr(request, 'scope'):
-        scope = request.scope
-        logger.info(f"scope type: {type(scope)}")
-        if isinstance(scope, dict):
-            for key in ['headers', 'method', 'path', 'query_string']:
-                if key in scope:
-                    logger.info(f"scope['{key}']: {type(scope[key])} = {scope[key]}")
-                else:
-                    logger.info(f"scope['{key}']: NOT PRESENT")
+    # Try FastMCP's get_http_request method
+    try:
+        from fastmcp.server.dependencies import get_http_request
+        http_request = get_http_request()
+        logger.info(f"get_http_request() type: {type(http_request)}")
+        logger.info(f"HTTP request method: {http_request.method}")
+        logger.info(f"HTTP request URL: {http_request.url}")
+        logger.info(f"HTTP request headers: {dict(http_request.headers)}")
+        
+        auth_from_request = http_request.headers.get("authorization")
+        if auth_from_request:
+            logger.info(f"✅ Authorization from HTTP request: {auth_from_request}")
+        else:
+            logger.warning(f"❌ No Authorization in HTTP request headers")
+            
+    except Exception as e:
+        logger.error(f"Failed to get HTTP request via get_http_request(): {e}")
     
-    # If meta exists, show its structure too
-    if hasattr(request, 'meta'):
-        meta = request.meta
-        logger.info(f"meta type: {type(meta)}")
-        if isinstance(meta, dict):
-            logger.info(f"meta keys: {list(meta.keys())}")
-            for key, value in meta.items():
-                logger.info(f"meta['{key}']: {type(value)} = {value}")
+    # Show MCP context for comparison
+    logger.info(f"MiddlewareContext attributes: {[attr for attr in dir(request) if not attr.startswith('_')]}")
     
-    logger.info(f"=== END PYTHON OBJECT DEBUG ===")
+    logger.info(f"=== END HTTP REQUEST DEBUG ===")
     
     # Log request details
     if hasattr(request, 'method'):
@@ -2621,7 +2593,6 @@ async def all_request_logging_middleware(request, call_next):
     return response
 
 # Add middleware to FastMCP server
-mcp.add_middleware(auth_middleware)
 # mcp.add_middleware(tool_logging_middleware)  # Disabled - use all_request_logging_middleware instead
 mcp.add_middleware(all_request_logging_middleware)
 
