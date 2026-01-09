@@ -2348,22 +2348,6 @@ async def _send_email_with_auth(
     """
     Generate and send a themed email via Gmail API with OAuth 2.0.
 
-    🚨 CRITICAL AGENT INSTRUCTIONS - READ CAREFULLY:
-
-    🚨 CRITICAL: SHOW LINK + START POLLING IMMEDIATELY:
-    1. Display the OAuth link prominently to the user
-    2. IMMEDIATELY start polling (don't wait for any confirmation)
-    3. Tell user: 'Click the link - I'm already watching for completion!'
-    4. User clicks while polling is running → seamless detection
-    5. Flow: show link + start polling → user clicks → automatic detection
-
-    🔄 POLLING REQUIREMENTS:
-    1. Use poll_oauth_code tool with exponential backoff (1s, 2s, 4s, 8s intervals)
-    2. Add randomization to each poll call to avoid 'identical tool calls' error
-    3. Example: poll_oauth_code(session_id='abc', attempt=1) then poll_oauth_code(session_id='abc', attempt=2)
-    4. Show countdown timer and cancel button during polling
-    5. Poll for maximum 60 seconds
-
     Args:
         to: Recipient email address
         theme: Email theme (birthday, pirate, space, medieval, superhero, tropical)
