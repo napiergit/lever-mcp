@@ -2562,17 +2562,44 @@ async def all_request_logging_middleware(request, call_next):
         logger.info(f"MCP method: {method_type}")
         
     logger.info(f"Request type: {type(request).__name__}")
+    logger.info(f"Request attributes: {[attr for attr in dir(request) if not attr.startswith('_')]}")
     
-    # Log headers
+    # Try different places to find headers
+    auth_header = None
+    headers_dict = {}
+    
+    # Check various possible locations for headers
     if hasattr(request, 'headers'):
-        headers_dict = dict(request.headers) if hasattr(request.headers, '__iter__') else {}
-        logger.info(f"Request headers: {headers_dict}")
-        
-        auth_header = request.headers.get("authorization")
-        if auth_header:
-            logger.info(f"✅ Authorization header found: {auth_header[:20]}...")
-        else:
-            logger.debug(f"No Authorization header")
+        try:
+            headers_dict = dict(request.headers) if hasattr(request.headers, '__iter__') else {}
+            auth_header = request.headers.get("authorization")
+            logger.info(f"Found headers in request.headers: {headers_dict}")
+        except Exception as e:
+            logger.debug(f"Error accessing request.headers: {e}")
+    
+    if hasattr(request, 'scope') and isinstance(request.scope, dict):
+        scope_headers = request.scope.get('headers', [])
+        logger.info(f"Found headers in request.scope: {scope_headers}")
+        # Convert ASGI header format to dict
+        for name, value in scope_headers:
+            key = name.decode('latin1').lower()
+            val = value.decode('latin1')
+            headers_dict[key] = val
+            if key == 'authorization':
+                auth_header = val
+    
+    if hasattr(request, 'meta') and isinstance(request.meta, dict):
+        meta = request.meta
+        logger.info(f"Found meta data: {meta}")
+        if 'authorization' in meta:
+            auth_header = meta['authorization']
+    
+    logger.info(f"Final headers dict: {headers_dict}")
+    
+    if auth_header:
+        logger.info(f"✅ Authorization header found: {auth_header[:20]}...")
+    else:
+        logger.warning(f"❌ No Authorization header found")
     
     # Log request details
     if hasattr(request, 'method'):
