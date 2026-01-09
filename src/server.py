@@ -1310,7 +1310,6 @@ async def _send_email(
         subject: Optional custom subject (uses theme default if not provided)
         cc: Optional CC recipients
         bcc: Optional BCC recipients
-        access_token: OAuth access token from agent (on-behalf-of flow)
         user_id: User identifier for token storage
         
     Returns:
@@ -2342,11 +2341,10 @@ async def _send_email_with_auth(
     theme: str, 
     subject: Optional[str] = None, 
     cc: Optional[str] = None, 
-    bcc: Optional[str] = None,
-    access_token: str = ""
+    bcc: Optional[str] = None
 ) -> str:
     """
-    Generate and send a themed email via Gmail API with OAuth 2.0.
+    Generate and send a themed email via Gmail API.
 
     Args:
         to: Recipient email address
@@ -2354,13 +2352,13 @@ async def _send_email_with_auth(
         subject: Optional custom subject (uses theme default if not provided)
         cc: Optional CC recipients
         bcc: Optional BCC recipients
-        access_token: OAuth access token from agent (on-behalf-of flow)
         
     Returns:
-        JSON response with email status and details, or automation instructions if OAuth needed
+        JSON response with email status and details
     """
-    # Check thread-local storage for auth token if not provided
-    if not access_token and hasattr(_request_context, 'access_token') and _request_context.access_token:
+    # Get auth token from thread-local storage
+    access_token = None
+    if hasattr(_request_context, 'access_token') and _request_context.access_token:
         access_token = _request_context.access_token
     
     return await _send_email_simple(to, theme, subject, cc, bcc, access_token)
