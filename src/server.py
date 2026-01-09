@@ -2313,10 +2313,18 @@ import threading
 _request_context = threading.local()
 
 # Middleware to capture Authorization headers for MCP tool calls
-async def auth_middleware(request: Request, call_next):
+async def auth_middleware(request, call_next):
     """Capture Authorization header for MCP tool calls."""
     # Store auth header in thread-local storage
-    auth_header = request.headers.get("authorization")
+    # Handle both FastAPI Request and MiddlewareContext objects
+    auth_header = None
+    if hasattr(request, 'headers') and hasattr(request.headers, 'get'):
+        # FastAPI Request object
+        auth_header = request.headers.get("authorization")
+    elif hasattr(request, 'meta') and isinstance(request.meta, dict):
+        # MiddlewareContext object - check meta for auth info
+        auth_header = request.meta.get("authorization")
+    
     if auth_header:
         if auth_header.startswith("Bearer "):
             _request_context.access_token = auth_header[7:]
