@@ -2378,19 +2378,29 @@ async def _send_email_simple(
     email_body = template["body"]
     
     try:
+        logger.info(f"_send_email_simple called with access_token: {access_token[:20]}..." if access_token else "None")
+        
         # Check if this is an MCP token that needs to be mapped to a Google token
         google_token_data = get_google_token_from_mcp_token(access_token)
+        logger.info(f"get_google_token_from_mcp_token returned: {google_token_data is not None}")
+        
         if google_token_data:
             # MCP token flow - use the stored Google token
             logger.info("Using MCP access_token - looking up Google token")
             google_access_token = google_token_data.get("access_token")
+            logger.info(f"Google access token found: {google_access_token[:20]}..." if google_access_token else "None")
             gmail_client = GmailClient(access_token=google_access_token, user_id="default")
         else:
             # Direct Google token flow (fallback)
             logger.info("Using provided access_token as Google token")
             gmail_client = GmailClient(access_token=access_token, user_id="default")
         
-        if not gmail_client.is_authenticated():
+        logger.info("Checking gmail_client authentication...")
+        auth_result = gmail_client.is_authenticated()
+        logger.info(f"Gmail client authentication result: {auth_result}")
+        
+        if not auth_result:
+            logger.error("Gmail client authentication failed")
             return json.dumps({
                 "status": "error",
                 "message": "Invalid or expired access token"
