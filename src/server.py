@@ -2434,14 +2434,26 @@ _request_context = threading.local()
 # Middleware to capture Authorization headers for MCP tool calls
 async def auth_middleware(request, call_next):
     """Capture Authorization header for MCP tool calls."""
-    # Store auth header in thread-local storage
-    # Handle both FastAPI Request and MiddlewareContext objects
+    # Store auth header in thread-local storage using comprehensive header detection
     auth_header = None
-    if hasattr(request, 'headers') and hasattr(request.headers, 'get'):
-        # FastAPI Request object
-        auth_header = request.headers.get("authorization")
-    elif hasattr(request, 'meta') and isinstance(request.meta, dict):
-        # MiddlewareContext object - check meta for auth info
+    
+    # Check various possible locations for headers (same as logging middleware)
+    if hasattr(request, 'headers'):
+        try:
+            auth_header = request.headers.get("authorization")
+        except Exception:
+            pass
+    
+    if not auth_header and hasattr(request, 'scope') and isinstance(request.scope, dict):
+        scope_headers = request.scope.get('headers', [])
+        # Convert ASGI header format
+        for name, value in scope_headers:
+            key = name.decode('latin1').lower()
+            if key == 'authorization':
+                auth_header = value.decode('latin1')
+                break
+    
+    if not auth_header and hasattr(request, 'meta') and isinstance(request.meta, dict):
         auth_header = request.meta.get("authorization")
     
     if auth_header:
@@ -2564,42 +2576,38 @@ async def all_request_logging_middleware(request, call_next):
     logger.info(f"Request type: {type(request).__name__}")
     logger.info(f"Request attributes: {[attr for attr in dir(request) if not attr.startswith('_')]}")
     
-    # Try different places to find headers
-    auth_header = None
-    headers_dict = {}
+    # Debug actual Python object structure
+    logger.info(f"=== PYTHON OBJECT DEBUG ===")
     
-    # Check various possible locations for headers
-    if hasattr(request, 'headers'):
-        try:
-            headers_dict = dict(request.headers) if hasattr(request.headers, '__iter__') else {}
-            auth_header = request.headers.get("authorization")
-            logger.info(f"Found headers in request.headers: {headers_dict}")
-        except Exception as e:
-            logger.debug(f"Error accessing request.headers: {e}")
+    # Show what's actually on the request object
+    for attr in ['headers', 'scope', 'meta', 'method', 'url', 'query_params']:
+        if hasattr(request, attr):
+            value = getattr(request, attr)
+            logger.info(f"request.{attr}: {type(value)} = {value}")
+        else:
+            logger.info(f"request.{attr}: NOT PRESENT")
     
-    if hasattr(request, 'scope') and isinstance(request.scope, dict):
-        scope_headers = request.scope.get('headers', [])
-        logger.info(f"Found headers in request.scope: {scope_headers}")
-        # Convert ASGI header format to dict
-        for name, value in scope_headers:
-            key = name.decode('latin1').lower()
-            val = value.decode('latin1')
-            headers_dict[key] = val
-            if key == 'authorization':
-                auth_header = val
+    # If scope exists, show its structure  
+    if hasattr(request, 'scope'):
+        scope = request.scope
+        logger.info(f"scope type: {type(scope)}")
+        if isinstance(scope, dict):
+            for key in ['headers', 'method', 'path', 'query_string']:
+                if key in scope:
+                    logger.info(f"scope['{key}']: {type(scope[key])} = {scope[key]}")
+                else:
+                    logger.info(f"scope['{key}']: NOT PRESENT")
     
-    if hasattr(request, 'meta') and isinstance(request.meta, dict):
+    # If meta exists, show its structure too
+    if hasattr(request, 'meta'):
         meta = request.meta
-        logger.info(f"Found meta data: {meta}")
-        if 'authorization' in meta:
-            auth_header = meta['authorization']
+        logger.info(f"meta type: {type(meta)}")
+        if isinstance(meta, dict):
+            logger.info(f"meta keys: {list(meta.keys())}")
+            for key, value in meta.items():
+                logger.info(f"meta['{key}']: {type(value)} = {value}")
     
-    logger.info(f"Final headers dict: {headers_dict}")
-    
-    if auth_header:
-        logger.info(f"✅ Authorization header found: {auth_header[:20]}...")
-    else:
-        logger.warning(f"❌ No Authorization header found")
+    logger.info(f"=== END PYTHON OBJECT DEBUG ===")
     
     # Log request details
     if hasattr(request, 'method'):
