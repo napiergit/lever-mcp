@@ -640,6 +640,7 @@ if oauth_enabled:
         redirect_uri = form_data.get("redirect_uri")
         
         logger.info(f"Token exchange requested. Grant type: {grant_type}, Client ID: {client_id}")
+        logger.debug(f"Token exchange form data: code present={bool(code)}, client_secret present={bool(client_secret)}, redirect_uri={redirect_uri}")
         
         if not code:
             return JSONResponse({
@@ -654,11 +655,18 @@ if oauth_enabled:
             }, status_code=400)
         
         # Check if this is an MCP authorization code (from our DCR flow)
+        logger.debug(f"Checking if code {code[:10]}... is in oauth_sessions: {code in oauth_sessions}")
+        if code in oauth_sessions:
+            session_data = oauth_sessions[code]
+            logger.debug(f"Session data type: {session_data.get('type')}, client_id: {session_data.get('client_id')}")
+            
         if code in oauth_sessions and oauth_sessions[code].get("type") == "dcr_auth_code":
             session_data = oauth_sessions[code]
+            logger.info(f"DCR auth code found. Session client_id: {session_data.get('client_id')}, Request client_id: {client_id}")
             
             # Authenticate the DCR client
             if not client_id or not client_secret:
+                logger.warning(f"Missing client credentials: client_id={bool(client_id)}, client_secret={bool(client_secret)}")
                 return JSONResponse({
                     "error": "invalid_client",
                     "error_description": "Client authentication required for DCR flow"
@@ -711,17 +719,24 @@ if oauth_enabled:
             return JSONResponse(mcp_token_response, status_code=200)
         
         # Regular OAuth flow (non-DCR) - authenticate client
+        logger.warning(f"Code not found in oauth_sessions or not DCR type. Available sessions: {list(oauth_sessions.keys())}")
+        logger.debug(f"oauth_sessions contents: {[(k, v.get('type', 'no_type')) for k, v in oauth_sessions.items()]}")
+        
         dynamic_client = None
         if client_id:
             # Dynamic client authentication
+            logger.info(f"Attempting dynamic client authentication for: {client_id}")
             if not client_secret:
+                logger.warning(f"No client_secret provided for client_id: {client_id}")
                 return JSONResponse({
                     "error": "invalid_client",
                     "error_description": "Client authentication required"
                 }, status_code=401)
             
             # Verify dynamic client credentials
+            logger.info(f"Authenticating client {client_id} with client_registry")
             if not client_registry.authenticate_client(client_id, client_secret):
+                logger.error(f"Client authentication failed for: {client_id}")
                 return JSONResponse({
                     "error": "invalid_client",
                     "error_description": "Client authentication failed"

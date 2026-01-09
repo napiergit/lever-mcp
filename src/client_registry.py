@@ -334,24 +334,48 @@ class ClientRegistry:
         Returns:
             True if authentication successful, False otherwise
         """
+        logger.info(f"Authenticating client: {client_id}")
+        
         client_data = self._load_client_data(client_id)
         if not client_data:
+            logger.warning(f"Client not found during authentication: {client_id}")
+            logger.debug(f"Available clients in memory: {list(self.memory_storage.keys())}")
+            logger.debug(f"Using memory storage: {self.use_memory_storage}")
             return False
         
+        logger.debug(f"Client data found for: {client_id}")
+        
         # Check if client is active
-        if client_data.get('status') != 'active':
+        status = client_data.get('status')
+        if status != 'active':
+            logger.warning(f"Client status check failed: {client_id} (status: {status})")
             return False
+        
+        logger.debug(f"Client status OK: {client_id}")
         
         # Check secret expiration
         expires_at = client_data.get('client_secret_expires_at')
         if expires_at and datetime.now() > expires_at:
+            logger.warning(f"Client secret expired: {client_id}")
             return False
+        
+        logger.debug(f"Client secret not expired: {client_id}")
         
         # Verify secret
         expected_hash = client_data.get('client_secret')
         actual_hash = self._hash_secret(client_secret)
         
-        return secrets.compare_digest(expected_hash, actual_hash)
+        logger.debug(f"Secret hash comparison for {client_id}: expected exists={bool(expected_hash)}, actual computed={bool(actual_hash)}")
+        
+        auth_result = secrets.compare_digest(expected_hash, actual_hash)
+        if auth_result:
+            logger.info(f"Client authentication successful: {client_id}")
+        else:
+            logger.warning(f"Client authentication failed - secret mismatch: {client_id}")
+            logger.debug(f"Expected hash length: {len(expected_hash) if expected_hash else 0}")
+            logger.debug(f"Actual hash length: {len(actual_hash) if actual_hash else 0}")
+        
+        return auth_result
     
     def update_client(self, client_id: str, registration_access_token: str, 
                      update_request: Dict[str, Any]) -> Dict[str, Any]:
