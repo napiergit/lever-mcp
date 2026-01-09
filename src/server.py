@@ -639,6 +639,51 @@ if oauth_enabled:
         client_secret = form_data.get("client_secret")
         redirect_uri = form_data.get("redirect_uri")
         
+        # Log initial credential state
+        logger.debug(f"Initial credentials from form: client_id={bool(client_id)}, client_secret={bool(client_secret)}")
+        
+        # Check for Authorization header
+        auth_header = request.headers.get("authorization", "")
+        logger.debug(f"Authorization header present: {bool(auth_header)}, starts with Basic: {auth_header.startswith('Basic ')}")
+        
+        # Support client_secret_basic authentication (Authorization header)
+        if not client_secret and not client_id:
+            if auth_header.startswith("Basic "):
+                import base64
+                logger.info("Attempting to extract client credentials from Authorization header (no form credentials)")
+                try:
+                    # Decode Basic auth: "Basic base64(client_id:client_secret)"
+                    encoded = auth_header[6:]  # Remove "Basic "
+                    decoded = base64.b64decode(encoded).decode('utf-8')
+                    client_id, client_secret = decoded.split(':', 1)
+                    logger.info(f"✅ Extracted client credentials from Authorization header: client_id={client_id}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to parse Authorization header: {e}")
+            else:
+                logger.debug("No Basic Authorization header found and no form credentials")
+        
+        # Also check if only client_id in form but secret in header (mixed mode)
+        elif client_id and not client_secret:
+            if auth_header.startswith("Basic "):
+                import base64
+                logger.info(f"Attempting to extract client_secret from Authorization header for client_id: {client_id}")
+                try:
+                    encoded = auth_header[6:]
+                    decoded = base64.b64decode(encoded).decode('utf-8')
+                    header_client_id, client_secret = decoded.split(':', 1)
+                    if header_client_id == client_id:
+                        logger.info(f"✅ Found matching client_secret in Authorization header for client_id: {client_id}")
+                    else:
+                        logger.error(f"❌ Client ID mismatch: form={client_id}, header={header_client_id}")
+                        client_secret = None  # Reset since IDs don't match
+                except Exception as e:
+                    logger.error(f"❌ Failed to parse Authorization header: {e}")
+            else:
+                logger.debug(f"No Basic Authorization header found for client_id: {client_id}")
+        
+        # Log final credential state
+        logger.info(f"Final credentials: client_id={bool(client_id)}, client_secret={bool(client_secret)}")
+        
         logger.info(f"Token exchange requested. Grant type: {grant_type}, Client ID: {client_id}")
         logger.debug(f"Token exchange form data: code present={bool(code)}, client_secret present={bool(client_secret)}, redirect_uri={redirect_uri}")
         
