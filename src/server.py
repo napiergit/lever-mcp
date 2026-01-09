@@ -2483,16 +2483,15 @@ async def _send_email_with_auth(
     
     return await _send_email_simple(to, theme, subject, cc, bcc, access_token)
 
-# Logging middleware for tool requests
+# Tool-only logging middleware
 async def tool_logging_middleware(request, call_next):
-    """Log tool requests with headers and request details for debugging."""
+    """Log only tool requests with headers and request details for debugging."""
     
     # Check if this is a tool call by examining the request
     is_tool_call = False
     tool_name = None
     
     try:
-        # Try to determine if this is an MCP tool call
         if hasattr(request, 'json') and callable(request.json):
             try:
                 body = await request.json()
@@ -2530,9 +2529,66 @@ async def tool_logging_middleware(request, call_next):
     response = await call_next(request)
     return response
 
+# All-request logging middleware
+async def all_request_logging_middleware(request, call_next):
+    """Log all requests with headers and request details for debugging."""
+    
+    # Determine request type
+    request_type = "GENERAL"
+    tool_name = None
+    method_type = None
+    
+    try:
+        if hasattr(request, 'json') and callable(request.json):
+            try:
+                body = await request.json()
+                if isinstance(body, dict):
+                    method_type = body.get('method')
+                    if method_type == 'tools/call':
+                        request_type = "TOOL_CALL"
+                        tool_name = body.get('params', {}).get('name')
+                    elif method_type:
+                        request_type = f"MCP_{method_type.upper().replace('/', '_')}"
+            except:
+                pass
+    except:
+        pass
+    
+    # Log all requests
+    logger.info(f"=== REQUEST DEBUG: {request_type} ===")
+    if tool_name:
+        logger.info(f"Tool name: {tool_name}")
+    if method_type:
+        logger.info(f"MCP method: {method_type}")
+        
+    logger.info(f"Request type: {type(request).__name__}")
+    
+    # Log headers
+    if hasattr(request, 'headers'):
+        headers_dict = dict(request.headers) if hasattr(request.headers, '__iter__') else {}
+        logger.info(f"Request headers: {headers_dict}")
+        
+        auth_header = request.headers.get("authorization")
+        if auth_header:
+            logger.info(f"✅ Authorization header found: {auth_header[:20]}...")
+        else:
+            logger.debug(f"No Authorization header")
+    
+    # Log request details
+    if hasattr(request, 'method'):
+        logger.info(f"HTTP method: {request.method}")
+    if hasattr(request, 'url'):
+        logger.info(f"Request URL: {request.url}")
+        
+    logger.info(f"=== END REQUEST DEBUG ===")
+    
+    response = await call_next(request)
+    return response
+
 # Add middleware to FastMCP server
 mcp.add_middleware(auth_middleware)
-mcp.add_middleware(tool_logging_middleware)
+# mcp.add_middleware(tool_logging_middleware)  # Disabled - use all_request_logging_middleware instead
+mcp.add_middleware(all_request_logging_middleware)
 
 # Register send_email tool with auth support
 mcp.tool(name="send_email")(_send_email_with_auth)
