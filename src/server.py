@@ -2372,13 +2372,13 @@ mcp.tool(name="send_email")(_send_email_with_auth)
 # Register generate_email_content - NO OAuth required (just generates content)
 # mcp.tool(name="generate_email_content")(_generate_email_content)
 
-mcp.tool(name="get_oauth_url")(_get_oauth_url)
-mcp.tool(name="exchange_oauth_code")(_exchange_oauth_code)
-mcp.tool(name="check_oauth_status")(_check_oauth_status)
+# mcp.tool(name="get_oauth_url")(_get_oauth_url)
+# mcp.tool(name="exchange_oauth_code")(_exchange_oauth_code)
+# mcp.tool(name="check_oauth_status")(_check_oauth_status)
 
 # Browser agent specific OAuth tools
-mcp.tool(name="get_browser_agent_oauth_url")(_get_browser_agent_oauth_url)
-mcp.tool(name="poll_oauth_code")(_poll_oauth_code)
+# mcp.tool(name="get_browser_agent_oauth_url")(_get_browser_agent_oauth_url)
+# mcp.tool(name="poll_oauth_code")(_poll_oauth_code)
 
 def main():
     """Main entry point for the MCP server."""
