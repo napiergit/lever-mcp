@@ -391,7 +391,9 @@ if oauth_enabled:
                             "google_token_data": token_response.json(),
                             "client_id": client_id,
                             "timestamp": datetime.now(),
-                            "type": "dcr_auth_code"
+                            "type": "dcr_auth_code",
+                            "code_challenge": dynamic_client_info.get('code_challenge'),
+                            "code_challenge_method": dynamic_client_info.get('code_challenge_method')
                         }
                         
                         logger.info(f"Generated MCP auth code for DCR client: {client_id}")
@@ -599,6 +601,11 @@ if oauth_enabled:
         logger.info(f"Authorization requested. Scopes: {requested_scopes}")
         logger.info(f"State: {request.query_params.get('state', 'none')}")
         
+        # Capture PKCE parameters
+        code_challenge = request.query_params.get("code_challenge")
+        code_challenge_method = request.query_params.get("code_challenge_method")
+        logger.debug(f"PKCE params: code_challenge={bool(code_challenge)}, method={code_challenge_method}")
+        
         # Store original client info in state for callback
         state = request.query_params.get("state", "")
         if client_id and redirect_uri:
@@ -607,7 +614,9 @@ if oauth_enabled:
             state_data = {
                 "original_state": state,
                 "client_id": client_id,
-                "redirect_uri": redirect_uri
+                "redirect_uri": redirect_uri,
+                "code_challenge": code_challenge,
+                "code_challenge_method": code_challenge_method
             }
             state = f"dcr_{base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode()}"
         
@@ -638,9 +647,11 @@ if oauth_enabled:
         client_id = form_data.get("client_id")
         client_secret = form_data.get("client_secret")
         redirect_uri = form_data.get("redirect_uri")
+        code_verifier = form_data.get("code_verifier")  # PKCE
         
-        # Log initial credential state
+        # Log initial credential state  
         logger.debug(f"Initial credentials from form: client_id={bool(client_id)}, client_secret={bool(client_secret)}")
+        logger.debug(f"PKCE parameter: code_verifier={bool(code_verifier)}")
         
         # Check for Authorization header
         auth_header = request.headers.get("authorization", "")
@@ -655,8 +666,16 @@ if oauth_enabled:
                     # Decode Basic auth: "Basic base64(client_id:client_secret)"
                     encoded = auth_header[6:]  # Remove "Basic "
                     decoded = base64.b64decode(encoded).decode('utf-8')
-                    client_id, client_secret = decoded.split(':', 1)
-                    logger.info(f"✅ Extracted client credentials from Authorization header: client_id={client_id}")
+                    logger.debug(f"Decoded Authorization header content: '{decoded}'")
+                    
+                    if ':' in decoded:
+                        client_id, client_secret = decoded.split(':', 1)
+                        logger.info(f"✅ Extracted client credentials from Authorization header: client_id={client_id}")
+                    else:
+                        # Authorization header only contains client_id, no secret
+                        client_id = decoded
+                        client_secret = None
+                        logger.warning(f"⚠️  Authorization header only contains client_id (no secret): {client_id}")
                 except Exception as e:
                     logger.error(f"❌ Failed to parse Authorization header: {e}")
             else:
@@ -709,19 +728,60 @@ if oauth_enabled:
             session_data = oauth_sessions[code]
             logger.info(f"DCR auth code found. Session client_id: {session_data.get('client_id')}, Request client_id: {client_id}")
             
-            # Authenticate the DCR client
-            if not client_id or not client_secret:
-                logger.warning(f"Missing client credentials: client_id={bool(client_id)}, client_secret={bool(client_secret)}")
-                return JSONResponse({
-                    "error": "invalid_client",
-                    "error_description": "Client authentication required for DCR flow"
-                }, status_code=401)
+            # Check client's registered authentication method first
+            client_data = client_registry.get_client(client_id)
+            auth_method = client_data.get('token_endpoint_auth_method', 'client_secret_basic') if client_data else 'client_secret_basic'
+            logger.info(f"Client {client_id} registered auth method: {auth_method}")
+            
+            # Check for PKCE verification first
+            stored_code_challenge = session_data.get("code_challenge")
+            stored_code_challenge_method = session_data.get("code_challenge_method")
+            
+            if stored_code_challenge and code_verifier:
+                # PKCE verification
+                logger.info(f"PKCE verification for client: {client_id}")
+                logger.debug(f"PKCE method: {stored_code_challenge_method}, code_verifier present: {bool(code_verifier)}")
                 
-            if not client_registry.authenticate_client(client_id, client_secret):
-                return JSONResponse({
-                    "error": "invalid_client",
-                    "error_description": "Client authentication failed"
-                }, status_code=401)
+                if stored_code_challenge_method == "S256":
+                    import hashlib
+                    import base64
+                    
+                    # Compute SHA256(code_verifier)
+                    verifier_hash = hashlib.sha256(code_verifier.encode('utf-8')).digest()
+                    computed_challenge = base64.urlsafe_b64encode(verifier_hash).decode('utf-8').rstrip('=')
+                    
+                    if computed_challenge == stored_code_challenge:
+                        logger.info(f"✅ PKCE verification successful for client: {client_id}")
+                    else:
+                        logger.error(f"❌ PKCE verification failed for client: {client_id}")
+                        return JSONResponse({
+                            "error": "invalid_grant",
+                            "error_description": "PKCE verification failed"
+                        }, status_code=400)
+                else:
+                    logger.error(f"Unsupported PKCE method: {stored_code_challenge_method}")
+                    return JSONResponse({
+                        "error": "invalid_request", 
+                        "error_description": f"Unsupported code_challenge_method: {stored_code_challenge_method}"
+                    }, status_code=400)
+                    
+            elif auth_method == 'none':
+                # Public client - no authentication required (non-PKCE)
+                logger.info(f"Public client authentication (none) - no client_secret required for: {client_id}")
+            else:
+                # Authenticate the DCR client for methods that require credentials
+                if not client_id or not client_secret:
+                    logger.warning(f"Missing client credentials: client_id={bool(client_id)}, client_secret={bool(client_secret)} (auth_method: {auth_method})")
+                    return JSONResponse({
+                        "error": "invalid_client",
+                        "error_description": "Client authentication required for DCR flow"
+                    }, status_code=401)
+                
+                if not client_registry.authenticate_client(client_id, client_secret):
+                    return JSONResponse({
+                        "error": "invalid_client",
+                        "error_description": "Client authentication failed"
+                    }, status_code=401)
             
             # Verify this code belongs to this client
             if session_data.get("client_id") != client_id:
