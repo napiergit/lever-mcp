@@ -2451,11 +2451,40 @@ async def _send_email_with_auth(
     Returns:
         JSON response with email status and details
     """
-    from fastmcp.server.dependencies import get_access_token
+    from fastmcp.server.dependencies import get_access_token, get_http_headers
     
-    # Get auth token using FastMCP's dependency injection
-    access_token_obj = get_access_token()
-    access_token = access_token_obj.token if access_token_obj else None
+    # Debug FastMCP auth first
+    try:
+        access_token_obj = get_access_token()
+        logger.info(f"get_access_token() returned: {access_token_obj}")
+    except Exception as e:
+        logger.info(f"get_access_token() failed: {e}")
+        
+    # Get Bearer token manually from headers since we have custom OAuth
+    try:
+        headers = get_http_headers(include_all=True)
+        auth_header = headers.get("authorization", "")
+        logger.info(f"Send email auth header: {auth_header}")
+        
+        if auth_header.startswith("Bearer "):
+            mcp_token = auth_header[7:]  # Remove "Bearer " prefix
+            logger.info(f"Extracted MCP token: {mcp_token}")
+            
+            # Look up in our custom token store
+            if mcp_token in mcp_token_store:
+                google_token_data = mcp_token_store[mcp_token]
+                access_token = google_token_data.get("access_token")
+                logger.info(f"Found Google access token from MCP token store")
+            else:
+                logger.error(f"MCP token not found in token store. Available tokens: {list(mcp_token_store.keys())}")
+                access_token = None
+        else:
+            logger.error(f"No Bearer token in authorization header")
+            access_token = None
+            
+    except Exception as e:
+        logger.error(f"Failed to extract token from headers: {e}")
+        access_token = None
     
     return await _send_email_simple(to, theme, subject, cc, bcc, access_token)
 
