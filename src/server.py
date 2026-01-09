@@ -2483,8 +2483,56 @@ async def _send_email_with_auth(
     
     return await _send_email_simple(to, theme, subject, cc, bcc, access_token)
 
+# Logging middleware for tool requests
+async def tool_logging_middleware(request, call_next):
+    """Log tool requests with headers and request details for debugging."""
+    
+    # Check if this is a tool call by examining the request
+    is_tool_call = False
+    tool_name = None
+    
+    try:
+        # Try to determine if this is an MCP tool call
+        if hasattr(request, 'json') and callable(request.json):
+            try:
+                body = await request.json()
+                if isinstance(body, dict) and body.get('method') == 'tools/call':
+                    is_tool_call = True
+                    tool_name = body.get('params', {}).get('name')
+            except:
+                pass
+    except:
+        pass
+    
+    if is_tool_call:
+        logger.info(f"=== TOOL REQUEST DEBUG: {tool_name} ===")
+        logger.info(f"Request type: {type(request).__name__}")
+        
+        # Log headers
+        if hasattr(request, 'headers'):
+            headers_dict = dict(request.headers) if hasattr(request.headers, '__iter__') else {}
+            logger.info(f"Request headers: {headers_dict}")
+            
+            auth_header = request.headers.get("authorization")
+            if auth_header:
+                logger.info(f"✅ Authorization header found: {auth_header[:20]}...")
+            else:
+                logger.warning(f"❌ No Authorization header in tool request")
+        
+        # Log request details
+        if hasattr(request, 'method'):
+            logger.info(f"HTTP method: {request.method}")
+        if hasattr(request, 'url'):
+            logger.info(f"Request URL: {request.url}")
+            
+        logger.info(f"=== END TOOL REQUEST DEBUG ===")
+    
+    response = await call_next(request)
+    return response
+
 # Add middleware to FastMCP server
 mcp.add_middleware(auth_middleware)
+mcp.add_middleware(tool_logging_middleware)
 
 # Register send_email tool with auth support
 mcp.tool(name="send_email")(_send_email_with_auth)
