@@ -2496,7 +2496,21 @@ async def _send_email_with_auth(
         logger.error(f"Failed to extract token from headers: {e}")
         access_token = None
     
-    return await _send_email_simple(to, theme, subject, cc, bcc, access_token)
+    logger.info(f"About to call _send_email_simple with access_token: {access_token[:20]}..." if access_token else "None")
+    
+    try:
+        result = await _send_email_simple(to, theme, subject, cc, bcc, access_token)
+        logger.info(f"_send_email_simple returned successfully")
+        return result
+    except Exception as e:
+        logger.error(f"Exception in _send_email_simple call: {e}")
+        logger.error(f"Exception type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return json.dumps({
+            "status": "error", 
+            "message": f"Email sending failed: {str(e)}"
+        }, indent=2)
 
 # Tool-only logging middleware
 async def tool_logging_middleware(request, call_next):
