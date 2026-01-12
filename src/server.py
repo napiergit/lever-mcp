@@ -2485,7 +2485,11 @@ async def _send_email_with_auth(
                 google_token_data = mcp_token_store[mcp_token]
                 logger.info(f"Google token data structure: {google_token_data}")
                 logger.info(f"Google token data keys: {list(google_token_data.keys()) if isinstance(google_token_data, dict) else 'Not a dict'}")
-                access_token = google_token_data.get("access_token")
+                
+                # Extract Google access token from nested structure
+                google_token = google_token_data.get("google_token", {})
+                access_token = google_token.get("access_token") if google_token else None
+                
                 logger.info(f"Found Google access token from MCP token store: {access_token[:20]}..." if access_token else "None")
             else:
                 logger.error(f"MCP token not found in token store. Available tokens: {list(mcp_token_store.keys())}")
